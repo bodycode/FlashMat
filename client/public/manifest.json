@@ -1,0 +1,33 @@
+{
+  "short_name": "FlashMat",
+  "name": "FlashMat - Mathematics Flashcard Learning",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "logo192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "logo512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#1565c0",
+  "background_color": "#ffffff",
+  "categories": ["education", "mathematics"],
+  "orientation": "any",
+  "description": "Interactive mathematics learning platform using flashcards",
+  "dir": "ltr",
+  "lang": "en",
+  "prefer_related_applications": false
+}
