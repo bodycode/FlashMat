@@ -3,6 +3,8 @@ const router = express.Router();
 const Deck = require('../models/Deck');
 const Card = require('../models/Card');
 const auth = require('../middleware/auth');
+const fs = require('fs');
+const path = require('path');
 
 // Get all decks
 router.get('/', auth, async (req, res) => {
@@ -76,18 +78,46 @@ router.post('/', auth, async (req, res) => {
 // Get deck by ID with selective population
 router.get('/:id', auth, async (req, res) => {
   try {
+    console.log('Fetching deck with ID:', req.params.id);
+    
     const deck = await Deck.findById(req.params.id)
-      .populate('creator', 'username')
       .populate({
         path: 'cards',
-        select: 'question answer type options difficulty'
-      });
-    
+        select: 'question answer type questionImage options mastered ratings'
+      })
+      .populate('creator', 'username');
+
     if (!deck) {
       return res.status(404).json({ message: 'Deck not found' });
     }
+
+    // Debug log without file system check
+    console.log('Deck data:', {
+      id: deck._id,
+      name: deck.name,
+      cardCount: deck.cards.length,
+      cardsWithImages: deck.cards
+        .filter(card => card.questionImage)
+        .map(card => ({
+          id: card._id,
+          imageUrl: card.questionImage.url
+        }))
+    });
+
+    // Check cards with images
+    const cardsWithImages = deck.cards.filter(card => card.questionImage);
+    if (cardsWithImages.length > 0) {
+      console.log('Found cards with images:', 
+        cardsWithImages.map(card => ({
+          cardId: card._id,
+          imageUrl: card.questionImage.url
+        }))
+      );
+    }
+
     res.json(deck);
   } catch (error) {
+    console.error('Error fetching deck:', error);
     res.status(500).json({ message: error.message });
   }
 });

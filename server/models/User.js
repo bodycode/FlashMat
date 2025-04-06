@@ -18,7 +18,8 @@ const userSchema = new mongoose.Schema({
   password: {
     type: String,
     required: true,
-    minlength: 6
+    minlength: 6,
+    select: false
   },
   role: {
     type: String,
@@ -37,27 +38,6 @@ const userSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Deck'
   }],
-  assignedDecks: [{
-    deck: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Deck'
-    },
-    assignedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Class'
-    },
-    progress: {
-      masteryLevel: {
-        type: Number,
-        default: 0
-      },
-      lastStudied: Date,
-      completedCards: [{
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Card'
-      }]
-    }
-  }],
   studyStreak: {
     type: Number,
     default: 0
@@ -65,19 +45,6 @@ const userSchema = new mongoose.Schema({
   lastStudied: {
     type: Date
   },
-  achievementPoints: {
-    type: Number,
-    default: 0
-  },
-  achievements: [{
-    title: String,
-    description: String,
-    earnedAt: {
-      type: Date,
-      default: Date.now
-    },
-    points: Number
-  }],
   profile: {
     avatar: String,
     bio: String,
@@ -126,52 +93,6 @@ userSchema.methods.updateStudyStreak = function() {
 
   this.lastStudied = new Date();
   return this.studyStreak;
-};
-
-userSchema.methods.addAchievement = async function(achievement) {
-  this.achievements.push(achievement);
-  this.achievementPoints += achievement.points;
-  await this.save();
-  return this.achievements;
-};
-
-userSchema.methods.assignDeck = async function(deckId, classId) {
-  const existingAssignment = this.assignedDecks.find(
-    assignment => assignment.deck?.toString() === deckId
-  );
-
-  if (!existingAssignment) {
-    this.assignedDecks.push({
-      deck: deckId,
-      assignedBy: classId,
-      progress: {
-        masteryLevel: 0,
-        lastStudied: null,
-        completedCards: []
-      }
-    });
-    await this.save();
-  }
-  return this.assignedDecks;
-};
-
-userSchema.methods.updateDeckProgress = async function(deckId, cardId, masteryLevel) {
-  const assignment = this.assignedDecks.find(
-    a => a.deck?.toString() === deckId
-  );
-
-  if (assignment) {
-    if (cardId && !assignment.progress.completedCards.includes(cardId)) {
-      assignment.progress.completedCards.push(cardId);
-    }
-    if (masteryLevel !== undefined) {
-      assignment.progress.masteryLevel = masteryLevel;
-    }
-    assignment.progress.lastStudied = new Date();
-    await this.save();
-  }
-
-  return assignment?.progress;
 };
 
 module.exports = mongoose.model('User', userSchema);

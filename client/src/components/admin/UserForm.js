@@ -11,43 +11,76 @@ import {
   Select,
   MenuItem,
   Alert,
-  Box
+  Box,
+  Autocomplete
 } from '@mui/material';
+import api from '../../services/api';
 
 const UserForm = ({ open, onClose, onSubmit, user = null }) => {
   const [formData, setFormData] = useState({
     username: '',
     email: '',
     password: '',
-    role: 'student'
+    role: 'student',
+    classes: []
   });
+  const [availableTeams, setAvailableTeams] = useState([]);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    fetchTeams();
     if (user) {
       setFormData({
         username: user.username || '',
         email: user.email || '',
         password: '',
-        role: user.role || 'student'
+        role: user.role || 'student',
+        classes: user.classes || []
       });
     } else {
       setFormData({
         username: '',
         email: '',
         password: '',
-        role: 'student'
+        role: 'student',
+        classes: []
       });
     }
   }, [user]);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!formData.username || !formData.email || (!user && !formData.password)) {
-      setError('Please fill in all required fields');
-      return;
+  const fetchTeams = async () => {
+    try {
+      const response = await api.get('/classes');
+      setAvailableTeams(response.data);
+    } catch (err) {
+      console.error('Error fetching teams:', err);
     }
-    onSubmit(formData);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      if (!formData.username || !formData.email || (!user && !formData.password)) {
+        setError('Please fill in all required fields');
+        return;
+      }
+
+      const userData = {
+        ...formData,
+        classes: formData.classes.map(c => typeof c === 'string' ? c : c._id)
+      };
+
+      if (user) {
+        // Remove password if empty on edit
+        if (!userData.password) {
+          delete userData.password;
+        }
+      }
+
+      onSubmit(userData);
+    } catch (error) {
+      setError(error.message);
+    }
   };
 
   return (
@@ -97,6 +130,22 @@ const UserForm = ({ open, onClose, onSubmit, user = null }) => {
                 <MenuItem value="admin">Admin</MenuItem>
               </Select>
             </FormControl>
+            <Autocomplete
+              multiple
+              options={availableTeams}
+              getOptionLabel={(option) => option.name}
+              value={formData.classes}
+              onChange={(_, newValue) => {
+                setFormData({ ...formData, classes: newValue });
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Assigned Teams"
+                  placeholder="Select teams"
+                />
+              )}
+            />
           </Box>
         </DialogContent>
         <DialogActions>

@@ -17,10 +17,10 @@ const Home = () => {
         textAlign: 'center'
       }}>
         <Typography variant="h2" component="h1" gutterBottom>
-          Welcome to FlashMat
+          FlashMat
         </Typography>
         <Typography variant="h5" color="text.secondary" paragraph>
-          Master mathematics through interactive flashcards
+          Learn Better
         </Typography>
         <Box sx={{ mt: 4 }}>
           {isAuthenticated ? (

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Box, TextField, Button, Typography, Alert } from '@mui/material';
-import { useAuth } from '../../context/AuthContext';
+import { Box, TextField, Button, Typography, Alert, Paper } from '@mui/material';
+import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { auth } from '../../services/api';
 
 const Login = () => {
   const [formData, setFormData] = useState({
@@ -9,75 +10,121 @@ const Login = () => {
     password: ''
   });
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
     
     try {
-      await login(formData.email, formData.password);
+      console.log('Attempting login with:', { email: formData.email });
+      
+      const response = await auth.login({
+        email: formData.email,
+        password: formData.password
+      });
+
+      console.log('Login response:', {
+        hasToken: !!response.data?.token,
+        hasUser: !!response.data?.user,
+        user: response.data?.user
+      });
+      
+      if (!response.data?.token || !response.data?.user) {
+        throw new Error('Invalid response format');
+      }
+
+      localStorage.setItem('token', response.data.token);
+      await login(response.data.user);
       navigate('/dashboard');
     } catch (err) {
-      setError(err.response?.data?.message || 'Login failed');
+      console.error('Login error:', {
+        status: err.response?.status,
+        data: err.response?.data,
+        error: err.message,
+        stack: err.stack
+      });
+      setError(err.response?.data?.message || 'Failed to login. Please try again.');
+      setTimeout(() => setError(''), 3000); // Clear error after 3 seconds
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleChange = (e) => {
-    setFormData({
-      ...formData,
+    setFormData(prev => ({
+      ...prev,
       [e.target.name]: e.target.value
-    });
+    }));
   };
 
   return (
-    <Box component="form" onSubmit={handleSubmit} sx={{ maxWidth: 400, mx: 'auto', mt: 4, p: 3 }}>
-      <Typography variant="h4" component="h1" gutterBottom>
-        Login
-      </Typography>
-      
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
+    <Box sx={{ maxWidth: 400, mx: 'auto', mt: 8, p: 2 }}>
+      <Paper elevation={3} sx={{ p: 4 }}>
+        <Typography variant="h4" component="h1" gutterBottom align="center">
+          Welcome Back 👋
+        </Typography>
+        
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error}
+          </Alert>
+        )}
 
-      <TextField
-        fullWidth
-        label="Email"
-        name="email"
-        type="email"
-        value={formData.email}
-        onChange={handleChange}
-        margin="normal"
-        required
-      />
+        <Box component="form" onSubmit={handleSubmit}>
+          <TextField
+            fullWidth
+            label="Email"
+            name="email"
+            type="email"
+            value={formData.email}
+            onChange={handleChange}
+            margin="normal"
+            required
+            autoFocus
+            autoComplete="email"
+          />
 
-      <TextField
-        fullWidth
-        label="Password"
-        name="password"
-        type="password"
-        value={formData.password}
-        onChange={handleChange}
-        margin="normal"
-        required
-      />
+          <TextField
+            fullWidth
+            label="Password"
+            name="password"
+            type="password"
+            value={formData.password}
+            onChange={handleChange}
+            margin="normal"
+            required
+            autoComplete="current-password"
+          />
 
-      <Button
-        type="submit"
-        variant="contained"
-        color="primary"
-        fullWidth
-        sx={{ mt: 3 }}
-      >
-        Login
-      </Button>
+          <Button
+            type="submit"
+            variant="contained"
+            color="primary"
+            fullWidth
+            size="large"
+            sx={{ mt: 3 }}
+            disabled={loading}
+          >
+            {loading ? 'Logging in...' : 'Login'}
+          </Button>
 
-      <Typography variant="body2" sx={{ mt: 2, textAlign: 'center' }}>
-        Don't have an account? <Button onClick={() => navigate('/register')}>Register</Button>
-      </Typography>
+          <Box sx={{ mt: 2, textAlign: 'center' }}>
+            <Typography variant="body2" color="text.secondary">
+              Don't have an account?{' '}
+              <Button 
+                onClick={() => navigate('/register')}
+                color="primary"
+              >
+                Register here
+              </Button>
+            </Typography>
+          </Box>
+        </Box>
+      </Paper>
     </Box>
   );
 };

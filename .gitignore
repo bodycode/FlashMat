@@ -29,5 +29,26 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
-# Upload directory
-uploads/
+# Upload directories - keep structure but ignore contents
+server/uploads/*
+!server/uploads/.gitkeep
+server/uploads/cards/*
+!server/uploads/cards/.gitkeep
+
+# Testing
+coverage/
+.nyc_output/
+
+# Debug
+debug.log
+debug/
+
+# Production
+.env.production.local
+.env.development.local
+.env.test.local
+
+# Misc
+.cache/
+.temp/
+*.bak

@@ -8,12 +8,17 @@ const roleAuth = require('../middleware/roleAuth');
 // Get all classes for current user
 router.get('/', auth, async (req, res) => {
   try {
+    console.log('Fetching classes for user:', req.user._id);
+    
     let query = {};
     if (req.user.role === 'teacher') {
-      query.teacher = req.user._id;
+      query = { teacher: req.user._id };
     } else if (req.user.role === 'student') {
-      query.students = req.user._id;
+      query = { students: req.user._id };
     }
+    // Admin gets all classes (empty query)
+
+    console.log('Query:', query);
 
     const classes = await Class.find(query)
       .populate('teacher', 'username email')
@@ -25,9 +30,10 @@ router.get('/', auth, async (req, res) => {
           path: 'creator',
           select: 'username'
         }
-      })
-      .lean();
+      });
 
+    console.log('Found classes:', classes.length);
+    
     res.json(classes);
   } catch (error) {
     console.error('Error fetching classes:', error);

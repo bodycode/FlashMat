@@ -25,6 +25,9 @@ import ClassForm from './pages/Classes/ClassForm';
 import ClassView from './pages/Classes/ClassView';
 import AssignmentList from './pages/Classes/AssignmentList';
 
+// Admin
+import UserList from './pages/Admin/UserList';
+
 function App() {
   return (
     <AuthProvider>
@@ -60,6 +63,11 @@ function App() {
               {/* Assignment Routes */}
               <Route path="/assignments" element={<AssignmentList />} />
               <Route path="/assignments/:id/study" element={<StudyMode />} />
+            </Route>
+
+            {/* Admin Routes */}
+            <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
+              <Route path="/admin/users" element={<UserList />} />
             </Route>
           </Routes>
         </Layout>

@@ -22,11 +22,15 @@ const ClassList = () => {
   useEffect(() => {
     const fetchClasses = async () => {
       try {
-        console.log('Fetching classes for user:', user?._id); // Debug log
-        const response = await api.get('/classes');  // Changed from '/classes/user' to '/classes'
-        console.log('Raw classes data:', response.data); // New debug log
-        setClasses(response.data);
-        setLoading(false);  // Move this here to ensure data is set
+        console.log('Fetching classes for user:', user?._id);
+        const response = await api.get('/classes');
+        console.log('Raw classes data:', response.data);
+        
+        // Filter out any classes with null teachers
+        const validClasses = response.data.filter(c => c.teacher);
+        setClasses(validClasses);
+        
+        setLoading(false);
       } catch (error) {
         console.error('Error fetching classes:', error);
         setError(error.message);
@@ -34,14 +38,13 @@ const ClassList = () => {
       }
     };
 
-    if (user?._id) {  // Only fetch if we have a user ID
+    if (user?._id) {
       fetchClasses();
     } else {
-      setLoading(false); // Make sure to stop loading if no user
+      setLoading(false);
     }
   }, [user?._id]);
 
-  // Log state changes
   useEffect(() => {
     console.log('Current classes state:', classes);
     console.log('Current user:', user);
@@ -61,15 +64,28 @@ const ClassList = () => {
   if (error) return <Typography color="error">{error}</Typography>;
 
   const userClasses = classes.filter(c => {
-    console.log('Filtering class:', c); // Debug each class
-    console.log('Teacher check:', c.teacher, user?._id);
-    console.log('Students check:', c.students);
+    // Add null checks and debug logging
+    const teacherId = c.teacher?._id || c.teacher;
+    const userId = user?._id;
+    const isTeacher = teacherId === userId;
     
-    return c.teacher === user?._id || 
-           c.students?.some(student => student === user?._id);
+    const isStudent = c.students?.some(student => {
+      const studentId = student?._id || student;
+      return studentId === userId;
+    });
+
+    console.log('Class filter check:', {
+      class: c.name,
+      teacherId,
+      userId,
+      isTeacher,
+      isStudent
+    });
+
+    return isTeacher || isStudent;
   });
 
-  console.log('Filtered classes:', userClasses); // Debug log
+  console.log('Filtered classes:', userClasses);
 
   return (
     <Box sx={{ p: 3 }}>
@@ -82,7 +98,6 @@ const ClassList = () => {
         <Typography variant="h4" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <School /> Teams
         </Typography>
-        {/* Changed condition to include admin */}
         {(user?.role === 'teacher' || user?.role === 'admin') && (
           <Button
             variant="contained"

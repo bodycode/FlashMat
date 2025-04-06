@@ -49,7 +49,7 @@ const Navbar = ({ onMenuClick }) => {
       case 'admin':
         return [
           ...commonItems,
-          { label: 'Users', path: '/users', icon: <Group /> },
+          { label: 'Users', path: '/admin/users', icon: <Group /> },
           { label: 'My Decks', path: '/decks', icon: <MenuBook /> },
           { label: 'System', path: '/admin/system', icon: <AdminPanelSettings /> }
         ];

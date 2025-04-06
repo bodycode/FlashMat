@@ -1,24 +1,54 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, TextField, Button, Typography, Alert, Paper } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
 import { useNotification } from '../contexts/NotificationContext';
 
 const Profile = () => {
-  const { user, updateProfile } = useAuth();
+  const { user, updateProfile, getProfile } = useAuth();
   const { showNotification } = useNotification();
   const [formData, setFormData] = useState({
-    username: user?.username || '',
-    email: user?.email || ''
+    username: '',
+    email: ''
   });
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    const loadProfile = async () => {
+      try {
+        const profileData = await getProfile();
+        setFormData({
+          username: profileData.username || '',
+          email: profileData.email || ''
+        });
+      } catch (err) {
+        setError('Failed to load profile');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadProfile();
+  }, [getProfile]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setLoading(true);
+    setError('');
+    setSuccess(false);
+
     try {
+      console.log('Submitting profile update:', formData);
       await updateProfile(formData);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
       showNotification('Profile updated successfully', 'success');
     } catch (err) {
+      console.error('Profile update error:', err);
       setError(err.response?.data?.message || 'Update failed');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -32,6 +62,12 @@ const Profile = () => {
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
             {error}
+          </Alert>
+        )}
+
+        {success && (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            Profile updated successfully
           </Alert>
         )}
 
@@ -58,8 +94,9 @@ const Profile = () => {
             variant="contained"
             color="primary"
             sx={{ mt: 3 }}
+            disabled={loading}
           >
-            Save Changes
+            {loading ? 'Saving...' : 'Save Changes'}
           </Button>
         </Box>
       </Paper>

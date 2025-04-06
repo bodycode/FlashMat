@@ -26,6 +26,7 @@ import {
   Whatshot,
   School
 } from '@mui/icons-material';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const Dashboard = () => {
   const { user } = useAuth();
@@ -40,20 +41,21 @@ const Dashboard = () => {
     recentlyStudied: [],
     needsReview: []
   });
+  const [activeTeams, setActiveTeams] = useState([]);
+  const [masteryTrend, setMasteryTrend] = useState([]);
 
   const fetchDashboardStats = useCallback(async () => {
     try {
       console.log('Fetching dashboard stats...');
-      const [decksRes, classesRes] = await Promise.all([
+      const [decksRes, teamsRes] = await Promise.all([
         api.get('/decks'),
         api.get('/classes')
       ]);
       
       const decks = decksRes.data || [];
-      const classes = classesRes.data || [];
+      const teams = teamsRes.data || [];
       
-      console.log('Fetched decks:', decks);
-      
+      // Calculate deck stats
       const recentlyStudied = decks
         .filter(deck => deck.stats?.lastStudied)
         .sort((a, b) => new Date(b.stats.lastStudied) - new Date(a.stats.lastStudied))
@@ -63,14 +65,55 @@ const Dashboard = () => {
         .filter(deck => (deck.stats?.masteryPercentage || 0) < 70)
         .slice(0, 3);
 
-      // Calculate stats only from decks that have stats
-      const decksWithStats = decks.filter(deck => deck.stats);
-      const statsTotal = decksWithStats.reduce((acc, deck) => ({
-        masterySum: acc.masterySum + (deck.stats.masteryPercentage || 0),
-        ratingSum: acc.ratingSum + (deck.stats.averageRating || 0),
-        count: acc.count + 1
-      }), { masterySum: 0, ratingSum: 0, count: 0 });
+      // Calculate deck statistics
+      const statsTotal = decks
+        .filter(deck => deck.stats)
+        .reduce((acc, deck) => ({
+          masterySum: acc.masterySum + (deck.stats.masteryPercentage || 0),
+          ratingSum: acc.ratingSum + (deck.stats.averageRating || 0),
+          count: acc.count + 1
+        }), { masterySum: 0, ratingSum: 0, count: 0 });
 
+      // Sort teams alphabetically
+      const sortedTeams = teams
+        .filter(team => team && team.name)
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      // Calculate team stats
+      const teamStats = {
+        totalTeams: sortedTeams.length,
+        totalMembers: sortedTeams.reduce((sum, team) => sum + (team.students?.length || 0), 0),
+        totalDecksAssigned: sortedTeams.reduce((sum, team) => sum + (team.decks?.length || 0), 0)
+      };
+
+      // Calculate mastery trend for last 14 days
+      const last14Days = [...Array(14)].map((_, i) => {
+        const date = new Date();
+        date.setDate(date.getDate() - (13 - i));
+        return date;
+      });
+
+      const masteryData = last14Days.map(date => {
+        const dayStats = decks.reduce((acc, deck) => {
+          const studySession = deck.stats?.studySessions?.find(session => 
+            new Date(session.date).toDateString() === date.toDateString()
+          );
+          if (studySession) {
+            acc.totalMastery += studySession.masteryLevel || 0;
+            acc.count += 1;
+          }
+          return acc;
+        }, { totalMastery: 0, count: 0 });
+
+        return {
+          date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          mastery: dayStats.count ? Math.round(dayStats.totalMastery / dayStats.count) : null
+        };
+      });
+
+      setMasteryTrend(masteryData);
+
+      setActiveTeams(sortedTeams);
       setStats({
         totalDecks: decks.length,
         studyStreak: user.studyStreak || 0,
@@ -80,8 +123,9 @@ const Dashboard = () => {
           Math.round((statsTotal.ratingSum / statsTotal.count) * 10) / 10 : 0,
         recentlyStudied,
         needsReview,
-        totalClasses: classes.length
+        ...teamStats
       });
+
     } catch (err) {
       console.error('Error fetching dashboard stats:', err);
     } finally {
@@ -166,28 +210,94 @@ const Dashboard = () => {
           <Card>
             <CardContent>
               <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-                <School /> My Classes
+                <TrendingUp /> Mastery Trend
+              </Typography>
+              <Box sx={{ width: '100%', height: 300 }}>
+                <ResponsiveContainer>
+                  <LineChart data={masteryTrend}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis 
+                      dataKey="date"
+                      tick={{ fontSize: 12 }}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis
+                      domain={[0, 100]}
+                      tick={{ fontSize: 12 }}
+                      label={{ 
+                        value: 'Mastery %', 
+                        angle: -90, 
+                        position: 'insideLeft',
+                        fontSize: 12
+                      }}
+                    />
+                    <Tooltip
+                      formatter={(value) => [`${value}%`, 'Mastery']}
+                      labelStyle={{ fontSize: 12 }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="mastery"
+                      stroke="#8884d8"
+                      strokeWidth={2}
+                      dot={{ r: 4 }}
+                      connectNulls
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <School /> My Teams
               </Typography>
               <List>
-                {stats.totalClasses > 0 ? (
+                {activeTeams.length > 0 ? (
                   <>
                     <ListItem>
                       <ListItemText 
-                        primary={`${stats.totalClasses} Active ${stats.totalClasses === 1 ? 'Class' : 'Classes'}`}
+                        primary={`${stats.totalTeams} Active ${stats.totalTeams === 1 ? 'Team' : 'Teams'}`}
+                        secondary={`Total Members: ${stats.totalMembers} | Total Decks: ${stats.totalDecksAssigned}`}
                       />
                     </ListItem>
+                    {activeTeams.map(team => (
+                      <ListItem 
+                        key={team._id}
+                        button
+                        onClick={() => navigate(`/classes/${team._id}`)}
+                        sx={{ 
+                          '&:hover': { 
+                            backgroundColor: 'action.hover',
+                            cursor: 'pointer' 
+                          } 
+                        }}
+                      >
+                        <ListItemIcon>
+                          <School />
+                        </ListItemIcon>
+                        <ListItemText 
+                          primary={team.name}
+                          secondary={`${team.students?.length || 0} Members | ${team.decks?.length || 0} Decks`}
+                        />
+                      </ListItem>
+                    ))}
                     <Button
                       variant="outlined"
                       fullWidth
                       onClick={() => navigate('/classes')}
                       sx={{ mt: 1 }}
                     >
-                      View Classes
+                      View All Teams
                     </Button>
                   </>
                 ) : (
                   <ListItem>
-                    <ListItemText primary="No classes joined yet" />
+                    <ListItemText primary="No teams joined yet" />
                   </ListItem>
                 )}
               </List>

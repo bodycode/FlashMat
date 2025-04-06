@@ -35,6 +35,8 @@ const StudyMode = () => {
   const [showCompletionDialog, setShowCompletionDialog] = useState(false);
   const [remainingCards, setRemainingCards] = useState([]);
 
+  const currentCard = remainingCards[currentCardIndex] || remainingCards[0];
+
   const updateDeckStats = async (stats) => {
     try {
       const response = await api.put(`/decks/${deckId}/stats`, {
@@ -69,6 +71,33 @@ const StudyMode = () => {
     const fetchDeck = async () => {
       try {
         const response = await api.get(`/decks/${deckId}`);
+        console.log('Raw deck response:', {
+          deckId: response.data._id,
+          cardCount: response.data.cards.length,
+          cardsWithImages: response.data.cards.filter(c => c.questionImage).map(c => ({
+            cardId: c._id,
+            imageUrl: c.questionImage?.url,
+            question: c.question
+          }))
+        });
+        console.log('Full deck response:', response.data);
+        
+        // Log any cards with images
+        const cardsWithImages = response.data.cards.filter(card => card.questionImage);
+        console.log('Cards with images:', cardsWithImages);
+        
+        if (cardsWithImages.length > 0) {
+          cardsWithImages.forEach(card => {
+            console.log('Image data for card:', {
+              cardId: card._id,
+              imageUrl: card.questionImage?.url,
+              fullUrl: `${process.env.REACT_APP_API_URL}${card.questionImage?.url}`
+            });
+          });
+        } else {
+          console.log('No cards found with images');
+        }
+
         setDeck(response.data);
         setRemainingCards([...response.data.cards]); // Initialize remaining cards
       } catch (error) {
@@ -205,6 +234,31 @@ const StudyMode = () => {
     };
   };
 
+  const getImageUrl = (imageUrl) => {
+    if (!imageUrl) return null;
+    
+    const baseUrl = 'http://localhost:5000'; // Hardcode for testing
+    const normalizedPath = imageUrl.startsWith('/') ? imageUrl : `/${imageUrl}`;
+    const fullUrl = `${baseUrl}${normalizedPath}`;
+
+    console.log('Image URL debug:', {
+      baseUrl,
+      imagePath: normalizedPath,
+      fullUrl,
+      originalUrl: imageUrl
+    });
+
+    return fullUrl;
+  };
+
+  useEffect(() => {
+    // Debug logging for current card
+    if (currentCard?.questionImage?.url) {
+      console.log('Current card image URL:', currentCard.questionImage.url);
+      console.log('Full image URL:', getImageUrl(currentCard.questionImage.url));
+    }
+  }, [currentCard]);
+
   // Add guard clause for empty remaining cards
   if (loading || !deck) return <LinearProgress />;
   if (deck.cards.length === 0) return <Typography>No cards in this deck</Typography>;
@@ -213,8 +267,6 @@ const StudyMode = () => {
       <Box sx={{ maxWidth: 600, mx: 'auto', p: 3, textAlign: 'center' }}>
         <Typography variant="h5" gutterBottom>
           Congratulations! 🎉
-        </Typography>
-        <Typography>
           You have completed all cards in this deck.
         </Typography>
         <Button
@@ -229,7 +281,6 @@ const StudyMode = () => {
     );
   }
 
-  const currentCard = remainingCards[currentCardIndex] || remainingCards[0];
   const progress = ((deck.cards.length - remainingCards.length) / deck.cards.length) * 100;
   const isLastCard = currentCardIndex === deck.cards.length - 1;
 
@@ -247,7 +298,7 @@ const StudyMode = () => {
             Whoops, Wrong Classroom! 😅
           </Button>
           <Button 
-            variant="outlined" 
+            variant="contained" 
             color="secondary"
             onClick={handleStopStudying}
             sx={{ fontWeight: 'bold' }}
@@ -281,19 +332,19 @@ const StudyMode = () => {
         <Card
           onClick={currentCard.type !== 'multipleChoice' ? handleFlip : undefined}
           sx={{
-            height: 300,
-            cursor: currentCard.type === 'multipleChoice' ? 'default' : 'pointer',
             position: 'relative',
+            minHeight: 400,
+            height: 'fit-content', // Allow natural height
             backgroundColor: 'transparent',
-            transition: 'opacity 0.3s ease-in-out',
+            transition: 'all 0.3s ease-in-out',
             opacity: isFlipped ? 0.95 : 1,
+            cursor: currentCard.type === 'multipleChoice' ? 'default' : 'pointer',
           }}
         >
           <Box
             sx={{
-              position: 'relative',
               width: '100%',
-              height: '100%',  // Take full height
+              height: '100%',
               textAlign: 'center',
               transition: 'transform 0.8s',
               transformStyle: 'preserve-3d',
@@ -303,18 +354,40 @@ const StudyMode = () => {
             {/* Front */}
             <CardContent
               sx={{
-                position: 'absolute',
+                position: 'relative', // Changed from absolute
                 width: '100%',
-                height: '100%',  // Take full height
+                height: '100%',
                 backfaceVisibility: 'hidden',
                 bgcolor: 'background.paper',
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
-                justifyContent: 'center',
-                p: 4,  // Add padding
+                gap: 2,
+                p: 4
               }}
             >
+              {!isFlipped && currentCard.questionImage?.url && (
+                <Box sx={{ mb: 3, width: '100%', display: 'flex', justifyContent: 'center', height: '200px' }}>
+                  <img
+                    src={getImageUrl(currentCard.questionImage.url)}
+                    alt="Question"
+                    style={{
+                      maxWidth: '100%',
+                      height: '100%',
+                      objectFit: 'contain',
+                      borderRadius: '4px'
+                    }}
+                    onError={(e) => {
+                      console.error('Image load error:', {
+                        originalUrl: currentCard.questionImage.url,
+                        fullUrl: getImageUrl(currentCard.questionImage.url),
+                        baseUrl: process.env.REACT_APP_API_URL || 'http://localhost:5000'
+                      });
+                      e.target.style.display = 'none';
+                    }}
+                  />
+                </Box>
+              )}
               <Typography variant="h5" sx={{ mb: currentCard.type === 'multipleChoice' ? 4 : 0, maxWidth: '90%' }}>
                 {currentCard.question}
               </Typography>
@@ -339,15 +412,17 @@ const StudyMode = () => {
             <CardContent
               sx={{
                 position: 'absolute',
+                top: 0,
+                left: 0,
                 width: '100%',
-                height: '100%',  // Take full height
+                height: '100%',
                 backfaceVisibility: 'hidden',
                 bgcolor: 'background.paper',
                 transform: 'rotateY(180deg)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                p: 4,  // Add padding
+                p: 4
               }}
             >
               <Typography variant="h5" sx={{ maxWidth: '90%' }}>

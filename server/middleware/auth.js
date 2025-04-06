@@ -9,17 +9,17 @@ const auth = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    console.log('Token decoded:', decoded); // Debug log
+    console.log('Token decoded:', decoded);
 
-    // Set BOTH _id and userId for consistency
+    // Pass through ALL user information from token
     req.user = {
       _id: decoded._id,
       userId: decoded._id,
       username: decoded.username,
-      role: decoded.role
+      role: decoded.role,
+      permissions: decoded.permissions // Add this
     };
 
-    console.log('User set:', req.user); // Debug log
     next();
   } catch (error) {
     console.error('Auth error:', error);

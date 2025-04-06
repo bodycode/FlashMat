@@ -43,11 +43,37 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
   };
 
+  const updateProfile = async (userData) => {
+    try {
+      console.log('Updating profile:', userData);
+      const response = await api.put('/auth/profile', userData);
+      console.log('Profile update response:', response.data);
+      setUser(prev => ({ ...prev, ...response.data }));
+      return response.data;
+    } catch (error) {
+      console.error('Profile update failed:', error);
+      throw error;
+    }
+  };
+
+  const getProfile = async () => {
+    try {
+      const response = await api.get('/auth/me');
+      setUser(prev => ({ ...prev, ...response.data }));
+      return response.data;
+    } catch (error) {
+      console.error('Get profile failed:', error);
+      throw error;
+    }
+  };
+
   const value = {
     user,
     login,
     logout,
     loading,
+    updateProfile,
+    getProfile,
     isAuthenticated: !!user
   };
 
