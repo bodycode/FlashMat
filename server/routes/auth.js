@@ -3,6 +3,7 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const User = require('../models/User');
+const Class = require('../models/Class'); // Add this import 
 const auth = require('../middleware/auth');
 
 // Register new user
@@ -57,7 +58,9 @@ router.post('/register', async (req, res) => {
   }
 });
 
-// Login user
+// Add special teacher login handling and debugging
+
+// Update login route with more detailed logging
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -75,6 +78,39 @@ router.post('/login', async (req, res) => {
     if (!user || !await bcrypt.compare(password, user.password)) {
       console.log('Login failed:', { email, reason: !user ? 'user not found' : 'invalid password' });
       return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    // Add extra logging when a user with teacher role logs in
+    if (user.role === 'teacher') {
+      console.log(`Teacher login: ${user.username} (${user._id})`);
+      
+      try {
+        // Count how many classes this teacher is assigned to
+        const teacherClassCount = await Class.countDocuments({ teacher: user._id });
+        const studentClassCount = await Class.countDocuments({ students: user._id });
+        
+        // Count decks
+        const userDecksCount = user.decks?.length || 0;
+        const createdDecksCount = user.createdDecks?.length || 0;
+        
+        console.log('Teacher user details:', {
+          id: user._id,
+          username: user.username,
+          classesAsTeacher: teacherClassCount,
+          classesAsStudent: studentClassCount,
+          assignedDecks: userDecksCount,
+          createdDecks: createdDecksCount
+        });
+        
+        // If there are classes, log their names
+        if (teacherClassCount > 0) {
+          const teacherClasses = await Class.find({ teacher: user._id }).select('_id name');
+          console.log('Classes where user is teacher:', teacherClasses.map(c => c.name));
+        }
+      } catch (err) {
+        console.error('Error getting teacher class info:', err);
+        // Continue with login even if this fails
+      }
     }
 
     const tokenPayload = {
@@ -192,6 +228,16 @@ router.get('/verify', auth, (req, res) => {
         canAccessSystem: ['admin'].includes(req.user.role)
       }
     } 
+  });
+});
+
+// Debug endpoint to check current user's role
+router.get('/check-role', auth, (req, res) => {
+  res.json({
+    userId: req.user.userId,
+    username: req.user.username,
+    role: req.user.role,
+    permissions: req.user.permissions || {}
   });
 });
 

@@ -11,8 +11,8 @@ const roleAuth = (roles = []) => {
       });
     }
 
-    // Allow admin to access everything
-    if (req.user.role === 'admin') {
+    // Allow admin AND teacher to access everything
+    if (req.user.role === 'admin' || req.user.role === 'teacher') {
       return next();
     }
 

@@ -11,7 +11,6 @@ const cardSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['text', 'multipleChoice', 'math'],
     default: 'text'
   },
   deck: {
@@ -20,33 +19,20 @@ const cardSchema = new mongoose.Schema({
     required: true
   },
   questionImage: {
-    type: new mongoose.Schema({
-      url: String,
-      filename: String
-    }, { _id: false })
-  },
-  options: {
-    type: [String],
-    validate: {
-      validator: function(v) {
-        return this.type !== 'multipleChoice' || (Array.isArray(v) && v.length >= 2);
-      },
-      message: 'Multiple choice cards must have at least 2 options'
-    }
-  },
-  mastered: {
-    type: Boolean,
-    default: false
+    url: String,
+    filename: String
   },
   ratings: [{
     user: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
+      ref: 'User',
+      required: true
     },
     value: {
       type: Number,
-      min: 1,
-      max: 5
+      min: 0,
+      max: 5,
+      required: true
     },
     date: {
       type: Date,
@@ -65,12 +51,6 @@ cardSchema.pre('save', function(next) {
   if (this.questionImage && (!this.questionImage.url || !this.questionImage.filename)) {
     this.questionImage = undefined;
   }
-
-  // Clean up options for non-multiple choice cards
-  if (this.type !== 'multipleChoice') {
-    this.options = undefined;
-  }
-
   next();
 });
 
@@ -79,6 +59,30 @@ cardSchema.methods.updateMasteryStatus = function() {
   const recentRatings = this.ratings.slice(-3);
   const avgRating = recentRatings.reduce((sum, r) => sum + r.value, 0) / recentRatings.length;
   return avgRating >= 4;
+};
+
+// Add method to get user's rating average
+cardSchema.methods.getUserRatingAverage = function(userId) {
+  const userRatings = this.ratings.filter(r => r.user.toString() === userId.toString());
+  if (userRatings.length === 0) return 0;
+  
+  return userRatings.reduce((sum, r) => sum + r.value, 0) / userRatings.length;
+};
+
+// Add method to add/update user rating
+cardSchema.methods.addRating = function(userId, value) {
+  const ratingIndex = this.ratings.findIndex(r => r.user.toString() === userId.toString());
+  
+  if (ratingIndex >= 0) {
+    this.ratings[ratingIndex].value = value;
+    this.ratings[ratingIndex].date = new Date();
+  } else {
+    this.ratings.push({
+      user: userId,
+      value: value,
+      date: new Date()
+    });
+  }
 };
 
 module.exports = mongoose.model('Card', cardSchema);

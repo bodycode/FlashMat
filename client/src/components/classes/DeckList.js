@@ -15,26 +15,55 @@ import {
   Typography,
   Alert,
   Checkbox,
-  ListItemIcon
+  ListItemIcon,
+  Tabs,
+  Tab,
+  Chip
 } from '@mui/material';
-import { Delete, Add } from '@mui/icons-material';
+import { Delete, Add, Check } from '@mui/icons-material';
 import api from '../../services/api';
 
 const DeckList = ({ classId, decks = [], isTeacher, onUpdate }) => {
   const navigate = useNavigate();
   const [openDialog, setOpenDialog] = useState(false);
   const [availableDecks, setAvailableDecks] = useState([]);
+  const [allDecks, setAllDecks] = useState([]);
   const [selectedDecks, setSelectedDecks] = useState([]);
   const [error, setError] = useState('');
+  const [showOnlyUnassigned, setShowOnlyUnassigned] = useState(false);
 
   const fetchAvailableDecks = async () => {
     try {
-      const response = await api.get('/decks');
-      const filtered = response.data.filter(
-        deck => !decks.some(d => d._id === deck._id)
-      );
-      setAvailableDecks(filtered);
+      setError('');
+      console.log('Fetching all decks for team assignment...');
+      
+      // For teachers and admins, get all decks without filtering
+      const response = await api.get('/decks?includeAssigned=true&all=true');
+      
+      // Keep track of all decks
+      setAllDecks(response.data);
+      
+      // Build a map of current team's decks for easy lookup
+      const currentDeckIds = new Set(decks.map(d => d._id));
+      
+      // Mark decks that are already assigned to this team
+      const markedDecks = response.data.map(deck => ({
+        ...deck,
+        isAssignedToTeam: currentDeckIds.has(deck._id)
+      }));
+      
+      // Sort alphabetically by name
+      markedDecks.sort((a, b) => {
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      });
+      
+      console.log(`Fetched ${markedDecks.length} total decks, ${currentDeckIds.size} already assigned`);
+      setAvailableDecks(markedDecks);
+      
+      // Pre-select currently assigned decks
+      setSelectedDecks(decks.map(d => d._id));
     } catch (err) {
+      console.error('Failed to fetch available decks:', err);
       setError('Failed to fetch available decks');
     }
   };
@@ -65,6 +94,19 @@ const DeckList = ({ classId, decks = [], isTeacher, onUpdate }) => {
       }
     }
   };
+
+  const toggleDeckSelection = (deckId) => {
+    setSelectedDecks(prev => 
+      prev.includes(deckId)
+        ? prev.filter(id => id !== deckId)
+        : [...prev, deckId]
+    );
+  };
+
+  // Filter decks based on the toggle state
+  const filteredAvailableDecks = showOnlyUnassigned
+    ? availableDecks.filter(deck => !deck.isAssignedToTeam)
+    : availableDecks;
 
   return (
     <Box>
@@ -123,44 +165,90 @@ const DeckList = ({ classId, decks = [], isTeacher, onUpdate }) => {
       <Dialog 
         open={openDialog} 
         onClose={() => setOpenDialog(false)}
-        maxWidth="sm"
+        maxWidth="md"
         fullWidth
       >
-        <DialogTitle>Add Study Materials</DialogTitle>
+        <DialogTitle>Manage Study Materials</DialogTitle>
+        <Box sx={{ px: 3, pb: 1 }}>
+          <Button
+            onClick={() => setShowOnlyUnassigned(!showOnlyUnassigned)}
+            color="primary"
+            variant={showOnlyUnassigned ? "contained" : "outlined"}
+            size="small"
+            sx={{ mb: 2 }}
+          >
+            {showOnlyUnassigned ? "Showing Unassigned Only" : "Showing All Decks"}
+          </Button>
+          
+          <Typography variant="body2" color="text.secondary">
+            Select decks to add to this team. All students in this team will be able to access these decks.
+          </Typography>
+        </Box>
         <DialogContent>
-          <List>
-            {availableDecks.map((deck) => (
-              <ListItem key={deck._id} button onClick={() => {
-                setSelectedDecks(prev => 
-                  prev.includes(deck._id)
-                    ? prev.filter(id => id !== deck._id)
-                    : [...prev, deck._id]
-                );
-              }}>
-                <ListItemIcon>
-                  <Checkbox
-                    edge="start"
-                    checked={selectedDecks.includes(deck._id)}
-                    tabIndex={-1}
-                    disableRipple
+          {availableDecks.length === 0 ? (
+            <Typography color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
+              Loading available decks...
+            </Typography>
+          ) : filteredAvailableDecks.length === 0 ? (
+            <Typography color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
+              No additional decks available
+            </Typography>
+          ) : (
+            <List>
+              {filteredAvailableDecks.map((deck) => (
+                <ListItem 
+                  key={deck._id} 
+                  button 
+                  onClick={() => toggleDeckSelection(deck._id)}
+                  sx={{
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                    bgcolor: deck.isAssignedToTeam ? 'rgba(0, 200, 83, 0.04)' : 'transparent'
+                  }}
+                >
+                  <ListItemIcon>
+                    <Checkbox
+                      edge="start"
+                      checked={selectedDecks.includes(deck._id)}
+                      tabIndex={-1}
+                      disableRipple
+                      color={deck.isAssignedToTeam ? "success" : "primary"}
+                    />
+                  </ListItemIcon>
+                  <ListItemText 
+                    primary={
+                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                        {deck.name}
+                        {deck.isAssignedToTeam && (
+                          <Chip 
+                            size="small" 
+                            label="Already Assigned" 
+                            color="success" 
+                            icon={<Check />}
+                            sx={{ ml: 1, height: 24 }}
+                            variant="outlined"
+                          />
+                        )}
+                      </Box>
+                    }
+                    secondary={`${deck.cards?.length || 0} cards`}
                   />
-                </ListItemIcon>
-                <ListItemText 
-                  primary={deck.name}
-                  secondary={`${deck.cards?.length || 0} cards`}
-                />
-              </ListItem>
-            ))}
-          </List>
+                </ListItem>
+              ))}
+            </List>
+          )}
         </DialogContent>
         <DialogActions>
+          <Typography variant="body2" color="text.secondary" sx={{ mr: 'auto', ml: 2 }}>
+            {selectedDecks.length} deck{selectedDecks.length !== 1 ? 's' : ''} selected
+          </Typography>
           <Button onClick={() => setOpenDialog(false)}>Cancel</Button>
           <Button 
             onClick={handleAddDecks} 
             variant="contained"
             disabled={selectedDecks.length === 0}
           >
-            Add Selected
+            Update Team Materials
           </Button>
         </DialogActions>
       </Dialog>

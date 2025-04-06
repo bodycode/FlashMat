@@ -4,6 +4,9 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const connectDB = require('./config/db');
+const User = require('./models/User');
+const Class = require('./models/Class');
+const Deck = require('./models/Deck');
 require('dotenv').config();
 
 const app = express();
@@ -41,16 +44,61 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Single static file middleware with logging
+// Improved static file middleware with better logging and headers
 app.use('/uploads', (req, res, next) => {
-  const fullPath = path.join(__dirname, 'uploads', req.path);
+  const filePath = path.join(__dirname, 'uploads', req.path);
   console.log('Static file request:', {
-    url: req.url,
-    fullPath,
-    exists: fs.existsSync(fullPath)
+    requestPath: req.path,
+    fullFilePath: filePath,
+    exists: fs.existsSync(filePath)
   });
+  
+  // Add appropriate headers for images
+  if (req.path.match(/\.(jpg|jpeg|png|gif)$/i)) {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+  }
+  
   next();
 }, express.static(path.join(__dirname, 'uploads')));
+
+// Diagnostic endpoint to help debug image issues
+app.get('/api/debug/image-exists', (req, res) => {
+  const { path: imagePath } = req.query;
+  
+  if (!imagePath) {
+    return res.status(400).json({ error: 'Missing path parameter' });
+  }
+  
+  // Sanitize the path to prevent directory traversal
+  const sanitizedPath = imagePath.replace(/\.\./g, '').replace(/^\/+/, '');
+  const fullPath = path.join(__dirname, sanitizedPath);
+  
+  const exists = fs.existsSync(fullPath);
+  let fileInfo = null;
+  
+  if (exists) {
+    try {
+      const stats = fs.statSync(fullPath);
+      fileInfo = {
+        size: stats.size,
+        isFile: stats.isFile(),
+        isDirectory: stats.isDirectory(),
+        modified: stats.mtime
+      };
+    } catch (err) {
+      console.error('Error getting file info:', err);
+    }
+  }
+  
+  res.json({
+    requestedPath: imagePath,
+    sanitizedPath,
+    fullPath,
+    exists,
+    fileInfo
+  });
+});
 
 // API Routes
 app.use('/api/auth', require('./routes/auth'));
@@ -59,6 +107,44 @@ app.use('/api/classes', require('./routes/classes'));
 app.use('/api/decks', require('./routes/decks'));
 app.use('/api/cards', require('./routes/cards'));
 app.use('/api/assignments', require('./routes/assignments'));
+
+// Debugging route to check assignments
+app.get('/api/debug/assignments/:deckId', async (req, res) => {
+  try {
+    const deckId = req.params.deckId;
+    
+    // Get users with this deck
+    const users = await User.find({ decks: deckId })
+      .select('_id username email');
+    
+    // Get teams with this deck
+    const teams = await Class.find({ decks: deckId })
+      .select('_id name');
+    
+    // Get the deck itself
+    const deck = await Deck.findById(deckId);
+    
+    res.json({
+      deck: deck ? { 
+        _id: deck._id, 
+        name: deck.name, 
+        creatorId: deck.creator 
+      } : null,
+      assignedUsers: users.map(u => ({ 
+        _id: u._id, 
+        username: u.username,
+        email: u.email
+      })),
+      assignedTeams: teams.map(t => ({ 
+        _id: t._id, 
+        name: t.name 
+      }))
+    });
+  } catch (error) {
+    console.error('Debug error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Health check
 app.get('/health', (req, res) => {

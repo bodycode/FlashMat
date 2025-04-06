@@ -9,7 +9,8 @@ import {
   DialogActions,
   Alert,
   Container,
-  CircularProgress
+  CircularProgress,
+  Tooltip
 } from '@mui/material';
 import { Add } from '@mui/icons-material';
 import UserTable from '../../components/admin/UserTable';
@@ -36,13 +37,42 @@ const UserList = () => {
 
   const fetchUsers = async () => {
     try {
+      setLoading(true);
       const response = await api.get('/users');
-      console.log('Fetched users:', response.data);
-      setUsers(response.data);
-      setLoading(false);
+      
+      // Get users with enhanced info including deck mastery stats
+      const usersWithProgress = await Promise.all(response.data.map(async user => {
+        try {
+          // Fetch progress for each user directly from the progress endpoint
+          const progressResponse = await api.get(`/users/${user._id}/progress`);
+          console.log(`Fetched progress for ${user.username}:`, progressResponse.data);
+          
+          return {
+            ...user,
+            masteryPercentage: progressResponse.data?.averageMastery || 0
+          };
+        } catch (err) {
+          console.warn(`Error getting progress for user ${user.username}:`, err);
+          // Still return the user with a default mastery of 0
+          return {
+            ...user,
+            masteryPercentage: 0
+          };
+        }
+      }));
+      
+      setUsers(usersWithProgress || []);
+      console.log('Fetched users with progress data:', 
+        usersWithProgress.map(u => ({
+          username: u.username,
+          role: u.role,
+          mastery: u.masteryPercentage
+        }))
+      );
     } catch (err) {
-      console.error('Error fetching users:', err);
+      console.error('Failed to fetch users:', err);
       setError(err.message);
+    } finally {
       setLoading(false);
     }
   };
@@ -53,6 +83,16 @@ const UserList = () => {
   };
 
   const handleDelete = (userId) => {
+    // Find the user to be deleted
+    const userToDelete = users.find(u => u._id === userId);
+    
+    // If teacher is trying to delete admin, show error
+    if (currentUser.role === 'teacher' && userToDelete?.role === 'admin') {
+      setError("Teachers cannot delete admin users");
+      return;
+    }
+    
+    // Otherwise continue with normal deletion flow
     setUserToDelete(userId);
     setDeleteDialogOpen(true);
   };
@@ -74,7 +114,10 @@ const UserList = () => {
       } else {
         await api.post('/users', formData);
       }
-      fetchUsers();
+      
+      // Always refresh users after adding/updating a user
+      await fetchUsers();
+      
       setFormOpen(false);
       setSelectedUser(null);
     } catch (err) {
@@ -82,8 +125,41 @@ const UserList = () => {
     }
   };
 
-  if (currentUser?.role !== 'admin') {
-    return <Typography>Access denied</Typography>;
+  // Update the handleUserUpdated function to correctly handle deck count updates
+  const handleUserUpdated = (updatedUser, deletedUserId) => {
+    if (deletedUserId) {
+      // Handle deletion - remove user from list
+      setUsers(prev => prev.filter(user => user._id !== deletedUserId));
+    } else if (updatedUser) {
+      // Handle update - make sure we update ALL properties including deck count
+      setUsers(prev => prev.map(user => {
+        if (user._id === updatedUser._id) {
+          console.log('Updating user in list:', {
+            username: updatedUser.username,
+            oldDeckCount: user.deckCount,
+            newDeckCount: updatedUser.deckCount,
+            oldTeamCount: user.teamCount, 
+            newTeamCount: updatedUser.teamCount
+          });
+          
+          // Return the updated user with ALL properties properly updated
+          return {
+            ...user,           // Keep any properties not in updatedUser
+            ...updatedUser,    // Override with all properties from updatedUser
+            deckCount: updatedUser.deckCount,
+            teamCount: updatedUser.teamCount
+          };
+        }
+        return user;
+      }));
+    } else {
+      // Fallback: refetch all users when we're not sure what changed
+      fetchUsers();
+    }
+  };
+
+  if (currentUser?.role !== 'admin' && currentUser?.role !== 'teacher') {
+    return <Typography>Access denied. Only administrators and teachers can access user management.</Typography>;
   }
 
   if (loading) {
@@ -119,6 +195,7 @@ const UserList = () => {
         users={users}
         onEdit={handleEdit}
         onDelete={handleDelete}
+        onUserUpdated={handleUserUpdated}
         page={page}
         rowsPerPage={rowsPerPage}
         totalUsers={users.length}
@@ -127,6 +204,7 @@ const UserList = () => {
           setRowsPerPage(parseInt(event.target.value, 10));
           setPage(0);
         }}
+        currentUser={currentUser} // Add this prop to pass the current user
       />
 
       <UserForm

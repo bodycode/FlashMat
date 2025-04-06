@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNotification } from '../contexts/NotificationContext';
 
 const Profile = () => {
-  const { user, updateProfile, getProfile } = useAuth();
+  const { user, updateProfile } = useAuth();
   const { showNotification } = useNotification();
   const [formData, setFormData] = useState({
     username: '',
@@ -15,22 +15,22 @@ const Profile = () => {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    const loadProfile = async () => {
-      try {
-        const profileData = await getProfile();
-        setFormData({
-          username: profileData.username || '',
-          email: profileData.email || ''
-        });
-      } catch (err) {
-        setError('Failed to load profile');
-      } finally {
-        setLoading(false);
-      }
-    };
+    if (user) {
+      setFormData({
+        username: user.username || '',
+        email: user.email || ''
+      });
+      setLoading(false);
+    }
+  }, [user]);
 
-    loadProfile();
-  }, [getProfile]);
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -75,16 +75,18 @@ const Profile = () => {
           <TextField
             fullWidth
             label="Username"
+            name="username"
             value={formData.username}
-            onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+            onChange={handleChange}
             margin="normal"
             required
           />
           <TextField
             fullWidth
             label="Email"
+            name="email"
             value={formData.email}
-            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+            onChange={handleChange}
             margin="normal"
             required
             type="email"

@@ -29,12 +29,26 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Updated login function to store role in localStorage for easy access
   const login = async (email, password) => {
-    const response = await axios.post('/api/auth/login', { email, password });
-    const { token, user } = response.data;
-    localStorage.setItem('token', token);
-    setUser(user);
-    return user;
+    try {
+      const response = await axios.post('/api/auth/login', { email, password });
+      const { token, user } = response.data;
+      
+      // Store token
+      localStorage.setItem('token', token);
+      
+      // Explicitly store role for easy access by components
+      if (user && user.role) {
+        localStorage.setItem('userRole', user.role);
+        console.log('Stored user role in localStorage:', user.role);
+      }
+      
+      setUser(user);
+      return user;
+    } catch (error) {
+      throw error;
+    }
   };
 
   const register = async (username, email, password) => {
@@ -49,17 +63,26 @@ export const AuthProvider = ({ children }) => {
     return user;
   };
 
+  // Also update logout to clear the role
   const logout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('userRole'); // Clear the role when logging out
     setUser(null);
   };
 
+  // Add a utility function inside AuthProvider
+  const isAdmin = () => {
+    return user && user.role === 'admin';
+  };
+
+  // Update the value object to include the isAdmin function
   const value = {
     user,
     loading,
     login,
     register,
     logout,
+    isAdmin,
     isAuthenticated: !!user
   };
 

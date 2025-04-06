@@ -77,22 +77,71 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);
 };
 
+// Update method to ensure streak is at least 1 day when studying
 userSchema.methods.updateStudyStreak = function() {
-  const today = new Date().toDateString();
-  const lastStudied = this.lastStudied?.toDateString();
-
-  if (today === lastStudied) {
-    return this.studyStreak;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  // Debug initial state
+  console.log('Before streak update:', {
+    userId: this._id,
+    currentStreak: this.studyStreak || 0,
+    lastStudied: this.lastStudied || 'Never'
+  });
+  
+  // Initialize lastStudied if not set
+  if (!this.lastStudied) {
+    this.lastStudied = today;
+    this.studyStreak = 1; // Always at least 1 when studying
+    console.log('First time studying, set streak to 1');
+    return;
   }
 
-  if (lastStudied === new Date(Date.now() - 86400000).toDateString()) {
-    this.studyStreak += 1;
-  } else {
+  // Convert lastStudied to date with time zeroed out for comparison
+  const lastStudied = new Date(this.lastStudied);
+  lastStudied.setHours(0, 0, 0, 0);
+  
+  // Calculate the difference in days
+  const diffTime = today.getTime() - lastStudied.getTime();
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+  // Always set lastStudied to today when they study
+  this.lastStudied = today;
+
+  console.log('Day difference calculation:', {
+    today: today.toISOString(),
+    lastStudied: lastStudied.toISOString(),
+    diffDays: diffDays
+  });
+
+  // Handle streak logic
+  if (diffDays === 0) {
+    // Same day, already counted in streak
+    this.studyStreak = Math.max(1, this.studyStreak || 0);
+    console.log('Same day studying, ensuring minimum streak of 1');
+  } 
+  else if (diffDays === 1) {
+    // Consecutive day, increment streak
+    this.studyStreak = Math.max(1, (this.studyStreak || 0) + 1);
+    console.log('Consecutive day, incrementing streak to', this.studyStreak);
+  }
+  else {
+    // More than a day since last study, reset streak
+    this.studyStreak = 1; // Start with 1 since they studied today
+    console.log('Gap in study days, resetting streak to 1');
+  }
+
+  // Ensure it's never less than 1 when studying
+  if (this.studyStreak < 1) {
+    console.log('Correcting invalid streak value', this.studyStreak);
     this.studyStreak = 1;
   }
 
-  this.lastStudied = new Date();
-  return this.studyStreak;
+  console.log('Final study streak update:', {
+    userId: this._id,
+    newStreak: this.studyStreak,
+    lastStudied: this.lastStudied
+  });
 };
 
 module.exports = mongoose.model('User', userSchema);

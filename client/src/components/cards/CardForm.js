@@ -5,315 +5,314 @@ import {
   Button, 
   Typography, 
   Alert,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   IconButton 
 } from '@mui/material';
 import {
-  Delete as DeleteIcon,
-  Add as AddIcon,
-  PhotoCamera
+  PhotoCamera,
+  Delete as DeleteIcon
 } from '@mui/icons-material';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../../services/api';
 
+// Fix the card duplication issue by correctly handling update vs create
+
+// Update the component to handle both create and edit properly
 const CardForm = () => {
   const { deckId, cardId } = useParams();
   const navigate = useNavigate();
-  const [formData, setFormData] = useState({
+  const [cardData, setCardData] = useState({
     question: '',
     answer: '',
-    type: 'text',
-    options: ['', '']
+    type: 'text'
   });
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
-
+  const [isEdit, setIsEdit] = useState(false);
+  
+  // Load card data if editing an existing card
   useEffect(() => {
-    const loadCard = async () => {
+    const fetchCard = async () => {
       if (cardId) {
-        setLoading(true);
         try {
+          setIsEdit(true);
+          console.log(`Loading card ${cardId} for editing`);
+          
           const response = await api.get(`/cards/${cardId}`);
-          setFormData(response.data);
+          const card = response.data;
+          
+          // Add some defensive checking for card data
+          if (!card) {
+            throw new Error('Card data not found');
+          }
+          
+          setCardData({
+            question: card.question || '',
+            answer: card.answer || '',
+            type: card.type || 'text',
+            difficulty: card.difficulty || 1
+          });
+          
+          // Set image preview if card has an image, with better URL handling
+          if (card.questionImage && card.questionImage.url) {
+            // Handle both relative and absolute URLs
+            const imageUrl = card.questionImage.url.startsWith('http') 
+              ? card.questionImage.url 
+              : card.questionImage.url;
+              
+            setImagePreview(imageUrl);
+            console.log('Loaded card with image:', imageUrl);
+          }
         } catch (err) {
-          setError('Failed to load card');
-        } finally {
-          setLoading(false);
+          console.error('Error loading card:', err);
+          setError('Failed to load card data: ' + (err.message || 'Unknown error'));
         }
       }
     };
-    loadCard();
+    
+    fetchCard();
   }, [cardId]);
-
-  const handleImageUpload = (event) => {
-    const file = event.target.files[0];
+  
+  // Handle image file selection
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
     if (file) {
+      // Validate file size
       if (file.size > 5 * 1024 * 1024) {
-        setError('Image must be less than 5MB');
+        setError('Image must be under 5MB');
         return;
       }
-
-      console.log('Image selected:', {
-        name: file.name,
-        type: file.type,
-        size: file.size
-      });
-
-      setFormData(prev => ({
-        ...prev,
-        imageFile: file
-      }));
-
+      
+      // Update state
+      setImageFile(file);
+      
+      // Generate preview
       const reader = new FileReader();
       reader.onloadend = () => {
         setImagePreview(reader.result);
       };
       reader.readAsDataURL(file);
+      
+      console.log('Image selected:', {
+        name: file.name,
+        type: file.type,
+        size: `${Math.round(file.size / 1024)} KB`
+      });
     }
   };
-
+  
+  // Handle removing the image
+  const handleRemoveImage = () => {
+    console.log('Removing image', { 
+      hadPreview: !!imagePreview, 
+      hadFile: !!imageFile 
+    });
+    
+    // Clear the image state
+    setImageFile(null);
+    setImagePreview(null);
+  };
+  
+  // Handle form input changes
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setCardData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+  
+  // Handle form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    // Form validation
+    if (!cardData.question.trim()) {
+      setError('Question is required');
+      return;
+    }
+    
+    if (!cardData.answer.trim()) {
+      setError('Answer is required');
+      return;
+    }
+    
+    setSubmitting(true);
+    
     try {
-      const formDataToSend = new FormData();
+      const formData = new FormData();
+      formData.append('question', cardData.question);
+      formData.append('answer', cardData.answer);
+      formData.append('type', cardData.type || 'text');
+      formData.append('difficulty', cardData.difficulty || 1);
       
-      formDataToSend.append('question', formData.question);
-      formDataToSend.append('type', formData.type);
-      formDataToSend.append('deck', deckId);
-
-      // Handle multiple choice differently
-      if (formData.type === 'multipleChoice') {
-        // Filter out empty options
-        const validOptions = formData.options.filter(opt => opt.trim() !== '');
-        if (validOptions.length < 2) {
-          setError('Multiple choice cards must have at least 2 options');
-          return;
-        }
-        formDataToSend.append('options', JSON.stringify(validOptions));
-        // First option is the answer
-        formDataToSend.append('answer', validOptions[0]);
+      if (deckId) {
+        formData.append('deck', deckId);
+      }
+      
+      // Handle image upload
+      if (imageFile) {
+        console.log('Adding new image file to request:', imageFile.name);
+        formData.append('questionImage', imageFile);
+      }
+      
+      let response;
+      
+      // Use PUT for edit, POST for new card
+      if (cardId) {
+        // EDITING existing card
+        console.log(`Updating card ${cardId}`);
+        
+        // When editing a card, explicitly set keepImage flag
+        // imagePreview null means we want to remove the image
+        const keepExistingImage = !!imagePreview && !imageFile;
+        
+        console.log('Image handling in form submission:', {
+          hasImageFile: !!imageFile,
+          hasImagePreview: !!imagePreview,
+          keepExistingImage
+        });
+        
+        // Always add the keepImage parameter when editing (false = remove image)
+        formData.append('keepImage', keepExistingImage ? 'true' : 'false');
+        
+        response = await api.put(`/cards/${cardId}`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
       } else {
-        formDataToSend.append('answer', formData.answer);
+        // CREATING new card
+        console.log('Creating new card');
+        response = await api.post('/cards', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          }
+        });
       }
-
-      // Handle image if present
-      if (formData.imageFile) {
-        formDataToSend.append('questionImage', formData.imageFile);
-      }
-
-      console.log('Submitting form data:', {
-        type: formData.type,
-        optionsCount: formData.type === 'multipleChoice' ? formData.options.length : 0,
-        hasAnswer: formData.type === 'multipleChoice' ? !!formData.options[0] : !!formData.answer
-      });
-
-      const response = await api.post('/cards', formDataToSend, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-
-      console.log('Card created:', response.data);
+      
+      // Log success
+      console.log('Card saved successfully:', response.data);
+      
+      // Navigate back to deck view
       navigate(`/decks/${deckId}`);
     } catch (err) {
-      console.error('Error creating card:', err);
-      setError(err.response?.data?.message || 'Failed to create card');
+      console.error('Error saving card:', err);
+      setError(err.response?.data?.message || 'Failed to save card: ' + (err.message || 'Unknown error'));
+    } finally {
+      setSubmitting(false);
     }
   };
-
-  const handleOptionChange = (index, value) => {
-    const newOptions = [...formData.options];
-    newOptions[index] = value;
-    setFormData({ ...formData, options: newOptions });
-  };
-
-  const addOption = () => {
-    setFormData({
-      ...formData,
-      options: [...formData.options, '']
-    });
-  };
-
-  const removeOption = (index) => {
-    const newOptions = formData.options.filter((_, i) => i !== index);
-    setFormData({ ...formData, options: newOptions });
-  };
-
-  if (loading) return <Typography>Loading...</Typography>;
-
   return (
-    <Box component="form" onSubmit={handleSubmit} sx={{ 
-      maxWidth: 600, 
-      mx: 'auto', 
-      p: 3,
-      display: 'flex',
-      flexDirection: 'column',
-      // Remove fixed height, let it grow
-      minHeight: 600,
-      height: 'auto',
-      flex: '1 1 auto'
-    }}>
+    <Box sx={{ maxWidth: 800, mx: 'auto', p: 3 }}>
       <Typography variant="h5" gutterBottom>
-        {cardId ? 'Edit Card' : 'Add New Card'}
+        {isEdit ? 'Edit Card' : 'Create New Card'}
       </Typography>
-
-      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-
-      <Box sx={{ 
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 3,
-        // Allow this container to grow
-        flex: '1 1 auto',
-        // Minimum space for content
-        minHeight: formData.type === 'multipleChoice' ? 500 : 300
-      }}>
-        <FormControl fullWidth margin="normal">
-          <InputLabel>Card Type</InputLabel>
-          <Select
-            value={formData.type}
-            onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-            label="Card Type"
-          >
-            <MenuItem value="text">Text</MenuItem>
-            <MenuItem value="multipleChoice">Multiple Choice</MenuItem>
-            <MenuItem value="math">Math</MenuItem>
-          </Select>
-        </FormControl>
-
+      
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          {error}
+        </Alert>
+      )}
+      
+      <Box component="form" onSubmit={handleSubmit} noValidate>
         <TextField
-          fullWidth
           label="Question"
-          value={formData.question}
-          onChange={(e) => setFormData({ ...formData, question: e.target.value })}
-          margin="normal"
+          name="question"
+          value={cardData.question}
+          onChange={handleChange}
           required
+          fullWidth
           multiline
-          rows={2}
+          rows={3}
+          margin="normal"
+          variant="outlined"
+          error={!!error && !cardData.question}
         />
-
-        {/* Image section with controlled height */}
-        <Box sx={{ 
-          maxHeight: '200px',
-          overflow: 'hidden',
-          mb: 2
-        }}>
-          <input
-            accept="image/*"
-            type="file"
-            id="image-upload"
-            style={{ display: 'none' }}
-            onChange={handleImageUpload}
-          />
-          <label htmlFor="image-upload">
+        
+        <Box sx={{ my: 3 }}>
+          <Typography variant="subtitle1" gutterBottom>
+            Question Image (Optional)
+          </Typography>
+          
+          {!imagePreview ? (
             <Button
               variant="outlined"
-              component="span"
+              component="label"
               startIcon={<PhotoCamera />}
+              sx={{ mt: 1 }}
             >
               Upload Image
+              <input
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={handleImageChange}
+              />
             </Button>
-          </label>
-          {imagePreview && (
-            <Box sx={{ 
-              mt: 2, 
-              height: '150px',
-              display: 'flex',
-              justifyContent: 'center'
-            }}>
-              <img 
-                src={imagePreview} 
-                alt="Question preview" 
-                style={{ 
-                  height: '100%',
-                  objectFit: 'contain'
+          ) : (
+            <Box sx={{ mt: 2, textAlign: 'center', position: 'relative' }}>
+              <img
+                src={imagePreview}
+                alt="Question preview"
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: '200px',
+                  borderRadius: '4px',
+                  border: '1px solid #ddd'
                 }}
               />
+              <IconButton
+                onClick={handleRemoveImage}
+                sx={{
+                  position: 'absolute',
+                  top: 0,
+                  right: 0,
+                  bgcolor: 'rgba(0,0,0,0.5)',
+                  color: 'white',
+                  '&:hover': {
+                    bgcolor: 'rgba(0,0,0,0.7)'
+                  }
+                }}
+              >
+                <DeleteIcon />
+              </IconButton>
             </Box>
           )}
         </Box>
-
-        {/* Multiple choice section with flexible height */}
-        {formData.type === 'multipleChoice' ? (
-          <Box sx={{ 
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 2,
-            // Allow growing with content
-            flex: '1 1 auto',
-            minHeight: 400,
-            // Remove maxHeight to allow growth
-            overflowY: 'visible',
-            mt: 2
-          }}>
-            <Typography variant="subtitle1" gutterBottom color="primary">
-              Options (First option will be the correct answer):
-            </Typography>
-            {formData.options.map((option, index) => (
-              <Box key={index} sx={{ 
-                display: 'flex', 
-                gap: 1, 
-                mb: 2,  // Increased spacing between options
-                alignItems: 'center' 
-              }}>
-                <TextField
-                  fullWidth
-                  label={index === 0 ? 'Correct Answer ✓' : `Option ${index + 1}`}
-                  value={option}
-                  onChange={(e) => handleOptionChange(index, e.target.value)}
-                  required
-                  sx={{
-                    '& .MuiInputLabel-root': {
-                      color: index === 0 ? 'success.main' : 'inherit'
-                    }
-                  }}
-                />
-                {index > 1 && (
-                  <IconButton 
-                    onClick={() => removeOption(index)} 
-                    color="error"
-                    sx={{ ml: 1 }}
-                  >
-                    <DeleteIcon />
-                  </IconButton>
-                )}
-              </Box>
-            ))}
-            <Button 
-              startIcon={<AddIcon />} 
-              onClick={addOption} 
-              sx={{ mt: 2 }}
-              variant="outlined"
-            >
-              Add Option
-            </Button>
-          </Box>
-        ) : (
-          <TextField
-            fullWidth
-            label="Answer"
-            value={formData.answer}
-            onChange={(e) => setFormData({ ...formData, answer: e.target.value })}
-            margin="normal"
-            required
-            multiline
-            rows={2}
-          />
-        )}
+        
+        <TextField
+          label="Answer"
+          name="answer"
+          value={cardData.answer}
+          onChange={handleChange}
+          required
+          fullWidth
+          multiline
+          rows={3}
+          margin="normal"
+          variant="outlined"
+          error={!!error && !cardData.answer}
+        />
+        
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 4 }}>
+          <Button
+            variant="outlined"
+            onClick={() => navigate(`/decks/${deckId}`)}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            variant="contained"
+            disabled={submitting}
+            color="primary"
+          >
+            {submitting ? 'Saving...' : isEdit ? 'Update Card' : 'Create Card'}
+          </Button>
+        </Box>
       </Box>
-
-      {/* Submit button always visible at bottom */}
-      <Button
-        type="submit"
-        variant="contained"
-        color="primary"
-        fullWidth
-        sx={{ mt: 'auto', py: 1.5 }}
-      >
-        {cardId ? 'Update Card' : 'Create Card'}
-      </Button>
     </Box>
   );
 };

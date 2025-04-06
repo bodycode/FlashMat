@@ -46,15 +46,24 @@ const Dashboard = () => {
 
   const fetchDashboardStats = useCallback(async () => {
     try {
-      console.log('Fetching dashboard stats...');
+      console.log(`Fetching dashboard stats for user ${user?._id}`);
       const [decksRes, teamsRes] = await Promise.all([
-        api.get('/decks'),
+        api.get('/decks'),  // This should return decks with user-specific stats
         api.get('/classes')
       ]);
       
       const decks = decksRes.data || [];
       const teams = teamsRes.data || [];
       
+      console.log('Retrieved decks count:', decks.length);
+      console.log('User-specific stats example from first deck:', 
+        decks.length > 0 ? {
+          masteryPercentage: decks[0].stats?.masteryPercentage,
+          averageRating: decks[0].stats?.averageRating,
+          lastStudied: decks[0].stats?.lastStudied,
+          studySessions: decks[0].stats?.studySessions?.length
+        } : 'No decks');
+
       // Calculate deck stats
       const recentlyStudied = decks
         .filter(deck => deck.stats?.lastStudied)
@@ -65,14 +74,27 @@ const Dashboard = () => {
         .filter(deck => (deck.stats?.masteryPercentage || 0) < 70)
         .slice(0, 3);
 
-      // Calculate deck statistics
-      const statsTotal = decks
-        .filter(deck => deck.stats)
-        .reduce((acc, deck) => ({
-          masterySum: acc.masterySum + (deck.stats.masteryPercentage || 0),
-          ratingSum: acc.ratingSum + (deck.stats.averageRating || 0),
+      // Calculate deck statistics using the same method as StudyMode
+      const statsTotal = decks.reduce((acc, deck) => {
+        // Skip decks without stats
+        if (!deck.stats) return acc;
+
+        // Get the mastery percentage directly from deck stats
+        const deckMastery = deck.stats.masteryPercentage || 0;
+        const deckRating = deck.stats.averageRating || 0;
+
+        return {
+          masterySum: acc.masterySum + deckMastery,
+          ratingSum: acc.ratingSum + deckRating,
           count: acc.count + 1
-        }), { masterySum: 0, ratingSum: 0, count: 0 });
+        };
+      }, { masterySum: 0, ratingSum: 0, count: 0 });
+
+      // Calculate averages
+      const averageMastery = statsTotal.count ? 
+        Math.round(statsTotal.masterySum / statsTotal.count) : 0;
+      const averageRating = statsTotal.count ? 
+        Math.round((statsTotal.ratingSum / statsTotal.count) * 10) / 10 : 0;
 
       // Sort teams alphabetically
       const sortedTeams = teams
@@ -93,21 +115,57 @@ const Dashboard = () => {
         return date;
       });
 
-      const masteryData = last14Days.map(date => {
-        const dayStats = decks.reduce((acc, deck) => {
-          const studySession = deck.stats?.studySessions?.find(session => 
-            new Date(session.date).toDateString() === date.toDateString()
+      // Log all study sessions found
+      decks.forEach(deck => {
+        if (deck.stats?.studySessions?.length) {
+          console.log(`Deck ${deck.name} has ${deck.stats.studySessions.length} study sessions:`,
+            deck.stats.studySessions.map(s => ({
+              date: new Date(s.date).toLocaleDateString(),
+              masteryLevel: s.masteryLevel
+            }))
           );
-          if (studySession) {
-            acc.totalMastery += studySession.masteryLevel || 0;
-            acc.count += 1;
-          }
-          return acc;
-        }, { totalMastery: 0, count: 0 });
+        }
+      });
 
+      const masteryData = last14Days.map(date => {
+        console.log('Processing date:', date.toLocaleDateString());
+        
+        const matchingSessions = [];
+        decks.forEach(deck => {
+          if (!deck.stats?.studySessions) return;
+          
+          // Check for study sessions on this date
+          const sessions = deck.stats.studySessions.filter(session => {
+            if (!session || !session.date) return false;
+            const sessionDate = new Date(session.date);
+            return sessionDate.toDateString() === date.toDateString();
+          });
+          
+          if (sessions.length > 0) {
+            console.log('Found sessions for deck:', {
+              deckId: deck._id,
+              deckName: deck.name,
+              sessions: sessions.map(s => ({
+                date: new Date(s.date).toLocaleString(),
+                mastery: s.masteryLevel
+              }))
+            });
+            matchingSessions.push(...sessions);
+          }
+        });
+        
+        let dayMastery = null;
+        if (matchingSessions.length > 0) {
+          dayMastery = Math.round(
+            matchingSessions.reduce((sum, session) => sum + (session.masteryLevel || 0), 0) / 
+            matchingSessions.length
+          );
+          console.log(`Mastery for ${date.toLocaleDateString()}:`, dayMastery);
+        }
+      
         return {
           date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-          mastery: dayStats.count ? Math.round(dayStats.totalMastery / dayStats.count) : null
+          mastery: dayMastery
         };
       });
 
@@ -117,10 +175,8 @@ const Dashboard = () => {
       setStats({
         totalDecks: decks.length,
         studyStreak: user.studyStreak || 0,
-        averageMastery: statsTotal.count ? 
-          Math.round(statsTotal.masterySum / statsTotal.count) : 0,
-        averageRating: statsTotal.count ? 
-          Math.round((statsTotal.ratingSum / statsTotal.count) * 10) / 10 : 0,
+        averageMastery,  // Use the new calculation
+        averageRating,
         recentlyStudied,
         needsReview,
         ...teamStats
@@ -131,7 +187,7 @@ const Dashboard = () => {
     } finally {
       setLoading(false);
     }
-  }, [user.studyStreak]);
+  }, [user?._id, user?.studyStreak]);
 
   useEffect(() => {
     fetchDashboardStats();
@@ -323,7 +379,7 @@ const Dashboard = () => {
                     </ListItemIcon>
                     <ListItemText 
                       primary={deck.name}
-                      secondary={`Last studied: ${new Date(deck.stats.lastStudied).toLocaleDateString()}`}
+                      secondary={`Last studied: ${new Date(deck.stats?.lastStudied || 'Invalid Date').toLocaleDateString()}`}
                     />
                   </ListItem>
                 ))}

@@ -16,18 +16,15 @@ const ClassForm = () => {
   const [availableUsers, setAvailableUsers] = useState([]);
   const [availableDecks, setAvailableDecks] = useState([]);
   
+  // Simplified form data without privacy options - all teams are private (invite-only)
   const [formData, setFormData] = useState({
     name: '',
     description: '',
-    privacy: 'private',
     invitedMembers: [],
     selectedDecks: [],
     joinCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
-    settings: {
-      allowSelfEnroll: false,
-      requireApproval: true,
-      visibleToAll: false
-    }
+    // Set private privacy by default - no longer user configurable
+    privacy: 'private'
   });
 
   // Fetch available users and decks
@@ -35,13 +32,37 @@ const ClassForm = () => {
     const fetchData = async () => {
       try {
         console.log('Fetching form data...');
+        
+        // FIX: Use includeAssigned=true&all=true to get ALL decks 
         const [usersRes, decksRes] = await Promise.all([
           api.get('/users'),
-          api.get('/decks')
+          api.get('/decks?includeAssigned=true&all=true') // Modified to get ALL decks
         ]);
-        console.log('Available decks:', decksRes.data);
+        
+        console.log(`Fetched ${decksRes.data.length} total decks for team assignment`);
+        
+        // Filter out any decks with empty or null names
+        const validDecks = decksRes.data.filter(deck => deck && deck.name && deck.name.trim() !== '');
+        
+        // Debug logging
+        console.log('Total decks received:', decksRes.data.length);
+        console.log('Valid decks after filtering:', validDecks.length);
+        
+        // If there was filtering, log the invalid deck
+        if (validDecks.length < decksRes.data.length) {
+          const invalidDecks = decksRes.data.filter(d => !d || !d.name || d.name.trim() === '');
+          console.warn('Found invalid decks:', invalidDecks);
+        }
+        
+        // Sort decks alphabetically by name for better usability
+        validDecks.sort((a, b) => {
+          const nameA = (a.name || '').toLowerCase();
+          const nameB = (b.name || '').toLowerCase();
+          return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+        });
+        
         setAvailableUsers(usersRes.data);
-        setAvailableDecks(decksRes.data);
+        setAvailableDecks(validDecks);
         setLoading(false);
       } catch (err) {
         console.error('Error fetching data:', err);
@@ -59,15 +80,11 @@ const ClassForm = () => {
           setFormData({
             name: response.data.name,
             description: response.data.description || '',
-            privacy: response.data.privacy || 'private',
-            invitedMembers: response.data.invitedMembers || [],
-            selectedDecks: response.data.selectedDecks || [],
-            joinCode: response.data.joinCode || Math.random().toString(36).substring(2, 8).toUpperCase(),
-            settings: response.data.settings || {
-              allowSelfEnroll: false,
-              requireApproval: true,
-              visibleToAll: false
-            }
+            // Always set privacy to private regardless of what's in the database
+            privacy: 'private',
+            invitedMembers: response.data.students?.map(s => typeof s === 'object' ? s._id : s) || [],
+            selectedDecks: response.data.decks?.map(d => typeof d === 'object' ? d._id : d) || [],
+            joinCode: response.data.joinCode || Math.random().toString(36).substring(2, 8).toUpperCase()
           });
         } catch (err) {
           setError('Failed to fetch class details');
@@ -84,7 +101,32 @@ const ClassForm = () => {
     try {
       const endpoint = id ? `/classes/${id}` : '/classes';
       const method = id ? 'put' : 'post';
-      await api[method](endpoint, formData);
+      
+      // Filter out any invalid deck IDs that might have been selected
+      const validSelectedDecks = formData.selectedDecks.filter(deckId => {
+        const exists = availableDecks.some(d => d._id === deckId);
+        if (!exists) {
+          console.warn(`Removing invalid deck ID from selection: ${deckId}`);
+        }
+        return exists;
+      });
+      
+      // Check if we filtered anything
+      if (validSelectedDecks.length !== formData.selectedDecks.length) {
+        console.log('Filtered out invalid decks:', {
+          before: formData.selectedDecks.length,
+          after: validSelectedDecks.length
+        });
+      }
+      
+      // Ensure privacy is set to 'private' before sending
+      const submissionData = {
+        ...formData,
+        selectedDecks: validSelectedDecks,
+        privacy: 'private' // Force private setting
+      };
+      
+      await api[method](endpoint, submissionData);
       navigate('/classes');
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to save team');
@@ -132,21 +174,6 @@ const ClassForm = () => {
             sx={{ mb: 3 }}
           />
 
-          {/* Team Settings Section */}
-          <Typography variant="h6" gutterBottom>Team Settings</Typography>
-          <FormControl fullWidth sx={{ mb: 2 }}>
-            <InputLabel>Privacy</InputLabel>
-            <Select
-              value={formData.privacy}
-              onChange={(e) => setFormData({ ...formData, privacy: e.target.value })}
-              label="Privacy"
-            >
-              <MenuItem value="private">Private (Invite Only)</MenuItem>
-              <MenuItem value="public">Public (Anyone can join)</MenuItem>
-              <MenuItem value="restricted">Restricted (Requires Approval)</MenuItem>
-            </Select>
-          </FormControl>
-
           {/* Member Selection */}
           <Typography variant="h6" gutterBottom>Invite Members</Typography>
           <FormControl fullWidth sx={{ mb: 3 }}>
@@ -162,7 +189,7 @@ const ClassForm = () => {
                     <Chip 
                       key={value} 
                       label={availableUsers.find(u => u._id === value)?.username}
-                      icon={<Group />}
+                      size="small"
                     />
                   ))}
                 </Box>
@@ -179,6 +206,9 @@ const ClassForm = () => {
 
           {/* Deck Assignment */}
           <Typography variant="h6" gutterBottom>Assign Study Material</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            Choose from {availableDecks.length} available study decks to assign to this team.
+          </Typography>
           <FormControl fullWidth sx={{ mb: 3 }}>
             <InputLabel>Select Decks</InputLabel>
             <Select
@@ -188,20 +218,33 @@ const ClassForm = () => {
               input={<OutlinedInput label="Select Decks" />}
               renderValue={(selected) => (
                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                  {selected.map((value) => (
-                    <Chip 
-                      key={value} 
-                      label={availableDecks.find(d => d._id === value)?.name}
-                      icon={<MenuBook />}
-                    />
-                  ))}
+                  {selected.map((value) => {
+                    const deck = availableDecks.find(d => d._id === value);
+                    // Skip rendering if deck is not found
+                    if (!deck || !deck.name) {
+                      console.warn(`Selected deck not found in available decks: ${value}`);
+                      return null;
+                    }
+                    return (
+                      <Chip 
+                        key={value} 
+                        label={deck.name}
+                        size="small"
+                        sx={{ 
+                          '& .MuiChip-label': { maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis' } 
+                        }}
+                      />
+                    );
+                  }).filter(Boolean)} {/* Filter out null values */}
                 </Box>
               )}
             >
               {availableDecks.map((deck) => (
                 <MenuItem key={deck._id} value={deck._id}>
                   <Checkbox checked={formData.selectedDecks.includes(deck._id)} />
-                  <ListItemText primary={deck.name} />
+                  <ListItemText 
+                    primary={deck.name} 
+                  />
                 </MenuItem>
               ))}
             </Select>

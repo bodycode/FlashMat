@@ -9,7 +9,7 @@ import {
   Tabs,
   Tab,
   CircularProgress,
-  Divider
+  Tooltip
 } from '@mui/material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -30,11 +30,28 @@ const ClassView = () => {
   const [editingAssignment, setEditingAssignment] = useState(null);
   const [activeTab, setActiveTab] = useState(0);
   const [showAssignmentForm, setShowAssignmentForm] = useState(false);
+  const [canEdit, setCanEdit] = useState(false);
 
+  // Add debug logging in the fetchClassDetails function
   const fetchClassDetails = async () => {
     try {
+      setLoading(true);
       const response = await api.get(`/classes/${id}`);
       setClassData(response.data);
+      
+      // Add debug logging for permissions check
+      const canEdit = user?.role === 'admin' || response.data.isAssignedTeacher;
+      console.log('Class edit permission check:', {
+        classId: id,
+        className: response.data.name,
+        userRole: user?.role,
+        userId: user?._id,
+        teacherId: response.data.teacher?._id,
+        isAssignedTeacher: response.data.isAssignedTeacher,
+        canEdit: canEdit
+      });
+      
+      setCanEdit(canEdit);
     } catch (error) {
       console.error('Error fetching class details:', error);
     } finally {
@@ -44,14 +61,14 @@ const ClassView = () => {
 
   useEffect(() => {
     fetchClassDetails();
-  }, [id]);
+  }, [id, user]);
 
   const handleAssignmentCreate = async (assignmentData) => {
     try {
       await api.post(`/classes/${id}/assignments`, assignmentData);
-      fetchClassDetails();
       setShowAssignmentForm(false);
       setEditingAssignment(null);
+      fetchClassDetails();
     } catch (error) {
       console.error('Error creating assignment:', error);
     }
@@ -80,6 +97,9 @@ const ClassView = () => {
   if (loading) return <CircularProgress />;
   if (!classData) return <Typography>Class not found</Typography>;
 
+  // Check if user is teacher of this class
+  const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
+
   return (
     <Box sx={{ p: 3 }}>
       <Box sx={{ 
@@ -91,7 +111,9 @@ const ClassView = () => {
         <Typography variant="h4">
           {classData.name}
         </Typography>
-        {user?.role === 'teacher' && (
+        
+        {/* Show active buttons only for admin or assigned teacher */}
+        {canEdit ? (
           <Box sx={{ display: 'flex', gap: 2 }}>
             <Button
               variant="outlined"
@@ -106,7 +128,32 @@ const ClassView = () => {
               Create Assignment
             </Button>
           </Box>
-        )}
+        ) : user?.role === 'teacher' ? (
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            <Tooltip title="You are not assigned to this Team" placement="left" arrow>
+              <span>
+                <Button
+                  variant="outlined"
+                  disabled
+                  sx={{ opacity: 0.5 }}
+                >
+                  Edit Class
+                </Button>
+              </span>
+            </Tooltip>
+            <Tooltip title="You are not assigned to this Team" placement="left" arrow>
+              <span>
+                <Button
+                  variant="contained"
+                  disabled
+                  sx={{ opacity: 0.5 }}
+                >
+                  Create Assignment
+                </Button>
+              </span>
+            </Tooltip>
+          </Box>
+        ) : null}
       </Box>
 
       <Tabs
@@ -132,26 +179,27 @@ const ClassView = () => {
                 <Typography>
                   {classData.description || 'No description provided.'}
                 </Typography>
+                
+                <Box sx={{ mt: 3 }}>
+                  <Typography variant="subtitle1" fontWeight="bold">
+                    Teacher
+                  </Typography>
+                  <Typography>
+                    {classData.teacher?.username || 'No teacher assigned'}
+                  </Typography>
+                </Box>
+                
+                <Box sx={{ mt: 3 }}>
+                  <Typography variant="subtitle1" fontWeight="bold">
+                    Overview
+                  </Typography>
+                  <Typography>
+                    {classData.students?.length || 0} Students • {classData.decks?.length || 0} Study Materials
+                  </Typography>
+                </Box>
               </CardContent>
             </Card>
           </Grid>
-          {classData.assignments?.length > 0 && (
-            <Grid item xs={12}>
-              <Typography variant="h6" gutterBottom>
-                Recent Assignments
-              </Typography>
-              {classData.assignments.slice(0, 3).map(assignment => (
-                <AssignmentCard
-                  key={assignment._id}
-                  assignment={assignment}
-                  isTeacher={user?.role === 'teacher'}
-                  onEdit={() => handleEditAssignment(assignment)}
-                  onDelete={() => handleDeleteAssignment(assignment._id)}
-                  onStart={() => handleStartAssignment(assignment)}
-                />
-              ))}
-            </Grid>
-          )}
         </Grid>
       )}
 
@@ -160,29 +208,21 @@ const ClassView = () => {
           <Grid item xs={12}>
             <ClassProgress classData={classData} />
           </Grid>
-          {classData.students?.map(student => (
-            <Grid item xs={12} md={6} key={student._id}>
-              <StudentProgress
-                student={student}
-                assignments={classData.assignments}
-              />
-            </Grid>
-          ))}
         </Grid>
       )}
 
       {activeTab === 2 && (
         <StudentList 
-          classId={id} 
+          classId={id}
           students={classData.students}
-          isTeacher={user?.role === 'teacher'}
+          isTeacher={isTeacher}
           onUpdate={fetchClassDetails}
         />
       )}
 
       {activeTab === 3 && (
         <Box>
-          {user?.role === 'teacher' && (
+          {isTeacher && (
             <Button
               variant="contained"
               onClick={() => setShowAssignmentForm(true)}
@@ -195,7 +235,7 @@ const ClassView = () => {
             <AssignmentCard
               key={assignment._id}
               assignment={assignment}
-              isTeacher={user?.role === 'teacher'}
+              isTeacher={isTeacher}
               onEdit={() => handleEditAssignment(assignment)}
               onDelete={() => handleDeleteAssignment(assignment._id)}
               onStart={() => handleStartAssignment(assignment)}
@@ -208,7 +248,7 @@ const ClassView = () => {
         <DeckList 
           classId={id}
           decks={classData.decks}
-          isTeacher={user?.role === 'teacher'}
+          isTeacher={isTeacher}
           onUpdate={fetchClassDetails}
         />
       )}

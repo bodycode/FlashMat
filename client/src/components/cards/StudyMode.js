@@ -39,28 +39,48 @@ const StudyMode = () => {
 
   const updateDeckStats = async (stats) => {
     try {
+      console.log('Sending user-specific stats to server:', stats);
+
+      // This endpoint now updates the UserProgress collection for this specific user
       const response = await api.put(`/decks/${deckId}/stats`, {
-        masteryPercentage: Math.round(stats.masteryPercentage * 100),
-        averageRating: Math.round(stats.averageRating * 10) / 10,
-        lastStudied: new Date()
+        masteryPercentage: stats.masteryPercentage,
+        averageRating: stats.averageRating
       });
 
-      if (!response.data) {
-        throw new Error('Failed to update deck stats');
-      }
+      console.log('Stats update response from server:', response.data);
+      return response.data;
     } catch (err) {
       console.error('Failed to update deck stats:', err);
+      throw err;
     }
   };
 
   const handleStopStudying = async () => {
-    const stats = calculateSessionStats();
-    await updateDeckStats({
-      masteryPercentage: stats.masteredCards,
-      averageRating: stats.averageRating,
-      lastStudied: new Date()
-    });
-    setShowCompletionDialog(true);
+    const stats = calculateSessionStats(); // Calculate final stats
+    
+    try {
+      // Update user-specific stats on the server
+      const response = await updateDeckStats({
+        masteryPercentage: stats.masteryPercentage,
+        averageRating: stats.averageRating,
+        lastStudied: new Date()
+      });
+      
+      // Use the returned stats from the server which include the user's progress
+      if (response && response.stats) {
+        setSessionStats({
+          ...stats,
+          masteryPercentage: response.stats.masteryPercentage,
+          averageRating: response.stats.averageRating
+        });
+      }
+      
+      setShowCompletionDialog(true);
+    } catch (error) {
+      console.error('Error saving progress:', error);
+      // Still show dialog with local stats if server update fails
+      setShowCompletionDialog(true);
+    }
   };
 
   const handleExitWithoutSaving = () => {
@@ -70,34 +90,15 @@ const StudyMode = () => {
   useEffect(() => {
     const fetchDeck = async () => {
       try {
+        // This endpoint now returns deck with user-specific stats
         const response = await api.get(`/decks/${deckId}`);
-        console.log('Raw deck response:', {
+        
+        console.log('Fetched deck with user-specific stats:', {
           deckId: response.data._id,
-          cardCount: response.data.cards.length,
-          cardsWithImages: response.data.cards.filter(c => c.questionImage).map(c => ({
-            cardId: c._id,
-            imageUrl: c.questionImage?.url,
-            question: c.question
-          }))
+          userStats: response.data.stats,
+          cards: response.data.cards.length
         });
-        console.log('Full deck response:', response.data);
         
-        // Log any cards with images
-        const cardsWithImages = response.data.cards.filter(card => card.questionImage);
-        console.log('Cards with images:', cardsWithImages);
-        
-        if (cardsWithImages.length > 0) {
-          cardsWithImages.forEach(card => {
-            console.log('Image data for card:', {
-              cardId: card._id,
-              imageUrl: card.questionImage?.url,
-              fullUrl: `${process.env.REACT_APP_API_URL}${card.questionImage?.url}`
-            });
-          });
-        } else {
-          console.log('No cards found with images');
-        }
-
         setDeck(response.data);
         setRemainingCards([...response.data.cards]); // Initialize remaining cards
       } catch (error) {
@@ -128,83 +129,119 @@ const StudyMode = () => {
     }, 300); // Half the transition time (0.8s/2 = 0.4s) for smooth transition
   };
 
-  const handleOptionSelect = async (selectedOption) => {
-    const isCorrect = selectedOption === currentCard.answer;
-    const rating = isCorrect ? 5 : 1;
+  // Fix the issue where the answer for the next card is visible briefly
+
+// Update the handleRating function to fully complete the transition before changing cards
+const handleRating = async (rating) => {
+  // For self-rated cards, track the rating as given
+  setScore(prev => ({
+    ...prev,
+    ratings: {...prev.ratings, [currentCard._id]: rating}
+  }));
+  
+  try {
+    // First set isFlipped to false to hide the answer
+    setIsFlipped(false);
     
-    // First update the score
-    setScore(prev => ({
-      ...prev,
-      [isCorrect ? 'correct' : 'incorrect']: prev[isCorrect ? 'correct' : 'incorrect'] + 1
-    }));
-
-    // Then handle the card transition with proper timing
-    setTimeout(() => {
-      handleRating(rating);
-    }, 300);
-  };
-
-  const handleRating = async (rating) => {
-    try {
-      await api.post(`/cards/${currentCard._id}/rate`, { rating });
+    // Store the rating request in a variable to send later
+    const ratingRequest = api.post(`/cards/${currentCard._id}/rate`, { rating });
+    
+    // Remove card only if rated 5, otherwise put back in deck
+    const updatedCards = remainingCards.filter(c => c._id !== currentCard._id);
+    
+    // Wait for flip animation to complete before changing cards
+    // This prevents seeing the next card's answer briefly
+    setTimeout(async () => {
+      // Now send the rating request
+      await ratingRequest;
       
-      setScore(prev => ({
-        ...prev,
-        ratings: {
-          ...prev.ratings,
-          [currentCard._id]: rating
-        }
-      }));
-
-      // First update remaining cards
-      const updatedCards = remainingCards.filter(card => card._id !== currentCard._id);
-      const newRemainingCards = rating === 5 ? updatedCards : [...updatedCards, currentCard];
-
-      // Then handle the transition
-      setIsFlipped(false);
-      
-      setTimeout(() => {
-        setRemainingCards(newRemainingCards);
-        if (newRemainingCards.length === 0) {
-          const stats = calculateSessionStats();
-          updateDeckStats(stats);
+      // Card "mastery" logic - only consider it mastered for rating 5
+      if (rating === 5) {
+        // Treat as mastered - remove from deck
+        if (updatedCards.length === 0) {
+          // Final card - calculate stats
+          const ratings = {...score.ratings, [currentCard._id]: rating};
+          
+          // Calculate mastery points
+          const masteryPoints = Object.values(ratings).reduce((sum, r) => {
+            switch (r) {
+              case 5: return sum + 1;     // 100% mastery
+              case 4: return sum + 0.75;  // 75% mastery
+              case 3: return sum + 0.5;   // 50% mastery
+              case 2: return sum + 0.25;  // 25% mastery
+              case 1: return sum;         // 0% mastery
+              default: return sum;        // unrated
+            }
+          }, 0);
+          
+          const masteryPercent = Math.round((masteryPoints / deck.cards.length) * 100);
+          const avgRating = Math.round((Object.values(ratings).reduce((a,b) => a+b, 0) / deck.cards.length) * 10) / 10;
+          
+          const response = await api.put(`/decks/${deckId}/stats`, {
+            masteryPercentage: masteryPercent,
+            averageRating: avgRating
+          });
+          
+          setSessionStats({
+            masteryPercentage: response.data.stats.masteryPercentage,
+            averageRating: response.data.stats.averageRating
+          });
           setShowCompletionDialog(true);
         } else {
+          setRemainingCards(updatedCards);
           setCurrentCardIndex(0);
         }
-      }, 400); // Increased delay to ensure flip completes
-
-    } catch (err) {
-      console.error('Rating error:', err);
-    }
-  };
+      } else {
+        // Not mastered - add back to deck
+        setRemainingCards([...updatedCards, currentCard]);
+        setCurrentCardIndex(0);
+      }
+    }, 400); // Allow enough time for the flip animation to complete
+  } catch (err) {
+    console.error('Error processing rating:', err);
+  }
+};
 
   const calculateSessionStats = () => {
     const ratings = score.ratings || {};
-    const allCards = deck.cards;
     
-    const masteryPercentages = allCards.map(card => {
-      const rating = ratings[card._id] || 0;
+    // Debug log of all ratings first
+    console.log('Calculating final session stats:', {
+      ratingsReceived: Object.keys(ratings).length,
+      totalCardsInDeck: deck.cards.length,
+      allRatings: ratings
+    });
+
+    const cardMasteryPoints = deck.cards.map(card => {
+      const rating = ratings[card._id] ?? 0; // Default to 0 if not rated
       switch (rating) {
-        case 5: return 1;      // 100%
-        case 4: return 0.75;   // 75%
-        case 3: return 0.5;    // 50%
-        case 2: return 0.25;   // 25%
-        default: return 0;     // 0% for rating 1 or no rating
+        case 5: return 1;     // 100% mastery
+        case 4: return 0.75;  // 75% mastery
+        case 3: return 0.5;   // 50% mastery
+        case 2: return 0.25;  // 25% mastery
+        case 1: return 0;     // 0% mastery
+        default: return 0;    // unrated
       }
     });
 
-    const totalMastery = masteryPercentages.reduce((sum, percent) => sum + percent, 0) / allCards.length;
-    const ratingValues = Object.values(ratings);
-    const avg = ratingValues.length > 0 
-      ? ratingValues.reduce((a, b) => a + b, 0) / ratingValues.length 
-      : 0;
+    const totalMasteryPoints = cardMasteryPoints.reduce((sum, points) => sum + points, 0);
+    const masteryPercentage = Math.round((totalMasteryPoints / deck.cards.length) * 100);
+
+    // Calculate average rating
+    const averageRating = Math.round((Object.values(ratings).reduce((a, b) => a + b, 0) / deck.cards.length) * 10) / 10;
 
     const stats = {
       totalCards: deck.cards.length,
-      masteredCards: totalMastery,  // Don't cap at 1 since we multiply by 100 later
-      averageRating: Math.round(avg * 10) / 10
+      masteryPercentage,
+      averageRating
     };
+
+    console.log('Final stats calculation:', {
+      ...stats,
+      cardMasteryPoints,
+      totalMasteryPoints,
+      allRatings: ratings
+    });
 
     setSessionStats(stats);
     return stats;
@@ -213,41 +250,57 @@ const StudyMode = () => {
   const calculateCurrentStats = () => {
     const ratings = score.ratings || {};
     const ratedCards = Object.keys(ratings).length;
-    const avgRating = ratedCards > 0 
-      ? Object.values(ratings).reduce((a, b) => a + b, 0) / ratedCards 
-      : 0;
     
-    const masteryPercentage = (Object.values(ratings).reduce((sum, rating) => {
-      switch (rating) {
-        case 5: return sum + 1;
-        case 4: return sum + 0.75;
-        case 3: return sum + 0.5;
-        case 2: return sum + 0.25;
-        default: return sum;
-      }
-    }, 0) / deck.cards.length) * 100;
+    // Count mastered cards (rating 5 only)
+    const masteredCards = Object.values(ratings).filter(r => r === 5).length;
+    const masteryPercentage = (masteredCards / deck.cards.length) * 100;
+    
+    // Calculate average across all ratings
+    const avgRating = ratedCards > 0
+      ? Object.values(ratings).reduce((a, b) => a + b, 0) / ratedCards
+      : 0;
 
-    return {
+    const stats = {
       mastery: Math.round(masteryPercentage),
       average: Math.round(avgRating * 10) / 10,
       rated: ratedCards
     };
+
+    console.log('Current stats calculated:', {
+      ...stats,
+      masteredCards,  // Replace undefined totalMasteryPoints with this
+      possiblePoints: deck.cards.length,
+      ratings: Object.values(ratings)
+    });
+
+    return stats;
   };
 
+  // Replace the getImageUrl function with this more robust version:
   const getImageUrl = (imageUrl) => {
     if (!imageUrl) return null;
     
-    const baseUrl = 'http://localhost:5000'; // Hardcode for testing
+    console.log('Original image URL:', imageUrl);
+    
+    // First, try the direct URL (works if your server and client are on same origin)
+    if (imageUrl.startsWith('/uploads/')) {
+      const directUrl = `http://localhost:5000${imageUrl}`;
+      console.log('Using direct URL:', directUrl);
+      return directUrl;
+    }
+    
+    // If it already has the full URL, use it
+    if (imageUrl.startsWith('http')) {
+      console.log('URL already absolute:', imageUrl);
+      return imageUrl;
+    }
+    
+    // Otherwise, construct a full URL
+    const baseUrl = 'http://localhost:5000'; // Hardcode this for reliability
     const normalizedPath = imageUrl.startsWith('/') ? imageUrl : `/${imageUrl}`;
     const fullUrl = `${baseUrl}${normalizedPath}`;
-
-    console.log('Image URL debug:', {
-      baseUrl,
-      imagePath: normalizedPath,
-      fullUrl,
-      originalUrl: imageUrl
-    });
-
+    
+    console.log('Constructed full URL:', fullUrl);
     return fullUrl;
   };
 
@@ -258,6 +311,11 @@ const StudyMode = () => {
       console.log('Full image URL:', getImageUrl(currentCard.questionImage.url));
     }
   }, [currentCard]);
+
+  // Reset scores when starting a new session
+  useEffect(() => {
+    setScore({ correct: 0, incorrect: 0, ratings: {} });
+  }, [deckId]);
 
   // Add guard clause for empty remaining cards
   if (loading || !deck) return <LinearProgress />;
@@ -284,6 +342,42 @@ const StudyMode = () => {
   const progress = ((deck.cards.length - remainingCards.length) / deck.cards.length) * 100;
   const isLastCard = currentCardIndex === deck.cards.length - 1;
 
+  const handleCompletionFinish = () => {
+    navigate('/decks'); // Go to list of all decks instead
+  };
+
+  const handleLastCard = async () => {
+    try {
+      console.log('FINAL CARD - Processing completion...');
+      
+      // Calculate final stats
+      const stats = calculateSessionStats();
+      
+      // Update user-specific stats on server
+      const response = await updateDeckStats({
+        masteryPercentage: stats.masteryPercentage,
+        averageRating: stats.averageRating
+      });
+      
+      // Use server-returned stats in the UI
+      if (response && response.stats) {
+        setSessionStats({
+          masteryPercentage: response.stats.masteryPercentage,
+          averageRating: response.stats.averageRating,
+          totalCards: deck.cards.length
+        });
+      }
+      
+      setShowCompletionDialog(true);
+    } catch (err) {
+      console.error('Final stats calculation error:', err);
+      setShowCompletionDialog(true);
+    }
+  };
+
+  // Fix the card height and rating stars positioning
+
+  // Update the main container to have a slightly shorter height
   return (
     <Box sx={{ maxWidth: 600, mx: 'auto', p: 3 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
@@ -330,47 +424,57 @@ const StudyMode = () => {
 
       <Box sx={{ perspective: '1000px' }}>
         <Card
-          onClick={currentCard.type !== 'multipleChoice' ? handleFlip : undefined}
+          onClick={handleFlip}
           sx={{
             position: 'relative',
-            minHeight: 400,
-            height: 'fit-content', // Allow natural height
+            minHeight: 360, // Reduced from 400 by 10%
+            maxHeight: '90vh', // Limit maximum height to 90% of viewport height
+            display: 'flex', // Add flex display
+            flexDirection: 'column', // Stack children vertically
             backgroundColor: 'transparent',
             transition: 'all 0.3s ease-in-out',
             opacity: isFlipped ? 0.95 : 1,
-            cursor: currentCard.type === 'multipleChoice' ? 'default' : 'pointer',
+            cursor: 'pointer',
+            overflow: 'hidden' // Prevent content from spilling outside the card
           }}
         >
           <Box
             sx={{
               width: '100%',
               height: '100%',
+              flex: 1, // Take up all available space
               textAlign: 'center',
               transition: 'transform 0.8s',
               transformStyle: 'preserve-3d',
               transform: isFlipped ? 'rotateY(180deg)' : '',
+              display: 'flex', // Add flex display
+              flexDirection: 'column' // Stack children vertically
             }}
           >
-            {/* Front */}
+            {/* Front - Update styles to fill entire card */}
             <CardContent
               sx={{
-                position: 'relative', // Changed from absolute
-                width: '100%',
+                position: 'relative',
+                width: '100%', 
                 height: '100%',
+                flex: 1, // Take up all available space
                 backfaceVisibility: 'hidden',
-                bgcolor: 'background.paper',
+                bgcolor: 'background.paper', // This is the white color
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
+                justifyContent: 'center',
                 gap: 2,
-                p: 4
+                p: 4,
+                margin: 0,
+                boxSizing: 'border-box' // Include padding in size calculation
               }}
             >
               {!isFlipped && currentCard.questionImage?.url && (
-                <Box sx={{ mb: 3, width: '100%', display: 'flex', justifyContent: 'center', height: '200px' }}>
+                <Box sx={{ mb: 3, width: '100%', display: 'flex', justifyContent: 'center', height: '180px' }}>
                   <img
                     src={getImageUrl(currentCard.questionImage.url)}
-                    alt="Question"
+                    alt={currentCard.questionImage.alt || "Question image"}
                     style={{
                       maxWidth: '100%',
                       height: '100%',
@@ -378,86 +482,142 @@ const StudyMode = () => {
                       borderRadius: '4px'
                     }}
                     onError={(e) => {
-                      console.error('Image load error:', {
-                        originalUrl: currentCard.questionImage.url,
-                        fullUrl: getImageUrl(currentCard.questionImage.url),
-                        baseUrl: process.env.REACT_APP_API_URL || 'http://localhost:5000'
-                      });
-                      e.target.style.display = 'none';
+                      console.error('Image failed to load:', e.target.src);
+                      
+                      // Try each possible URL variation as fallbacks
+                      const fallbackUrls = [
+                        `http://localhost:5000${currentCard.questionImage.url}`,
+                        currentCard.questionImage.url.replace('/uploads/', 'http://localhost:5000/uploads/'),
+                        `http://localhost:5000/uploads/${currentCard.questionImage.url.split('/').pop()}`
+                      ];
+                      
+                      console.log('Trying fallback URLs:', fallbackUrls);
+                      
+                      // Try the next fallback URL
+                      const currentSrc = e.target.src;
+                      const currentIndex = fallbackUrls.indexOf(currentSrc);
+                      const nextIndex = currentIndex + 1;
+                      
+                      if (nextIndex < fallbackUrls.length) {
+                        e.target.src = fallbackUrls[nextIndex];
+                      } else {
+                        // All fallbacks failed, show error message
+                        e.target.style.display = 'none';
+                        const errorText = document.createElement('div');
+                        errorText.textContent = 'Image could not be loaded';
+                        errorText.style.color = 'gray';
+                        errorText.style.fontStyle = 'italic';
+                        e.target.parentNode.appendChild(errorText);
+                        
+                        // Log the failure details for debugging
+                        console.error('All image fallbacks failed:', {
+                          originalUrl: currentCard.questionImage.url,
+                          triedUrls: [getImageUrl(currentCard.questionImage.url), ...fallbackUrls]
+                        });
+                      }
                     }}
                   />
                 </Box>
               )}
-              <Typography variant="h5" sx={{ mb: currentCard.type === 'multipleChoice' ? 4 : 0, maxWidth: '90%' }}>
+              <Typography variant="h5" sx={{ mb: 0, maxWidth: '90%' }}>
                 {currentCard.question}
               </Typography>
-
-              {currentCard.type === 'multipleChoice' && (
-                <Stack spacing={2} width="100%">
-                  {currentCard.options.map((option, index) => (
-                    <Button
-                      key={index}
-                      variant="outlined"
-                      fullWidth
-                      onClick={() => handleOptionSelect(option)}
-                    >
-                      {option}
-                    </Button>
-                  ))}
-                </Stack>
+              
+              {/* Add rating UI at the bottom when card is flipped */}
+              {isFlipped && (
+                <Box 
+                  sx={{ 
+                    position: 'absolute',
+                    bottom: 0,
+                    left: 0,
+                    width: '100%',
+                    padding: 2,
+                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                    borderTop: '1px solid rgba(0, 0, 0, 0.1)',
+                    textAlign: 'center',
+                    zIndex: 10, // Ensure it's above other content
+                  }}
+                  // This onClick handler prevents the event from reaching the card
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Typography variant="body2" gutterBottom>Rate your knowledge:</Typography>
+                  <Rating
+                    size="large"
+                    max={5}
+                    onChange={(_, value) => handleRating(value)}
+                    sx={{
+                      fontSize: '1.75rem',
+                      '& .MuiRating-iconFilled': {
+                        color: 'primary.main'
+                      }
+                    }}
+                  />
+                </Box>
               )}
             </CardContent>
 
-            {/* Back */}
+            {/* Back - Update styles to fill entire card */}
             <CardContent
               sx={{
                 position: 'absolute',
                 top: 0,
                 left: 0,
                 width: '100%',
-                height: '100%',
+                height: '100%', 
                 backfaceVisibility: 'hidden',
-                bgcolor: 'background.paper',
+                bgcolor: 'background.paper', // This is the white color
                 transform: 'rotateY(180deg)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                p: 4
+                p: 4,
+                margin: 0,
+                boxSizing: 'border-box' // Include padding in size calculation
               }}
             >
               <Typography variant="h5" sx={{ maxWidth: '90%' }}>
                 {currentCard.answer}
               </Typography>
+              
+              {/* Add rating UI at the bottom when card is flipped */}
+              {isFlipped && (
+                <Box 
+                  sx={{ 
+                    position: 'absolute',
+                    bottom: 0,
+                    left: 0,
+                    width: '100%',
+                    padding: 2,
+                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                    borderTop: '1px solid rgba(0, 0, 0, 0.1)',
+                    textAlign: 'center',
+                    zIndex: 10,
+                  }}
+                  // This onClick handler prevents the event from reaching the card
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Typography variant="body2" gutterBottom>Rate your knowledge:</Typography>
+                  <Rating
+                    size="large"
+                    max={5}
+                    onChange={(_, value) => handleRating(value)}
+                    sx={{
+                      fontSize: '1.75rem',
+                      '& .MuiRating-iconFilled': {
+                        color: 'primary.main'
+                      }
+                    }}
+                  />
+                </Box>
+              )}
             </CardContent>
           </Box>
         </Card>
       </Box>
 
-      {isFlipped && currentCard.type !== 'multipleChoice' && (
-        <Box sx={{ mt: 2, textAlign: 'center' }}>
-          <Typography gutterBottom>Rate your knowledge of this card:</Typography>
-          <Rating
-            size="large"
-            max={5}
-            onChange={(_, value) => handleRating(value)}
-            sx={{
-              fontSize: '2rem',
-              '& .MuiRating-iconFilled': {
-                color: 'primary.main'
-              }
-            }}
-          />
-          <Box sx={{ mt: 1 }}>
-            <Typography variant="caption" color="text.secondary">
-              1 = Need more practice | 5 = Mastered
-            </Typography>
-          </Box>
-        </Box>
-      )}
-
       <Dialog 
         open={showCompletionDialog} 
-        onClose={() => navigate(`/decks/${deckId}`)}
+        onClose={handleCompletionFinish}
         maxWidth="sm"
         fullWidth
       >
@@ -473,7 +633,7 @@ const StudyMode = () => {
               Your Progress:
             </Typography>
             <Typography>
-              Mastery Progress: {Math.round(sessionStats.masteredCards * 100)}%
+              Mastery Progress: {sessionStats.masteryPercentage}%
             </Typography>
             <Typography>
               Average Rating: {sessionStats.averageRating}
@@ -483,9 +643,9 @@ const StudyMode = () => {
         <DialogActions sx={{ justifyContent: 'center', pb: 3 }}>
           <Button
             variant="contained"
-            onClick={() => navigate(`/decks/${deckId}`)}
+            onClick={handleCompletionFinish}
           >
-            Back to Deck
+            Back to Decks
           </Button>
         </DialogActions>
       </Dialog>

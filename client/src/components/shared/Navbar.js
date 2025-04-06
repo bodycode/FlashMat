@@ -34,6 +34,7 @@ const Navbar = ({ onMenuClick }) => {
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [menuAnchor, setMenuAnchor] = useState(null);
 
+  // Modify the getNavigationItems function to include the Users tab for teachers
   const getNavigationItems = () => {
     if (!isAuthenticated) return [
       { label: 'Login', path: '/login' },
@@ -56,6 +57,7 @@ const Navbar = ({ onMenuClick }) => {
       case 'teacher':
         return [
           ...commonItems,
+          { label: 'Users', path: '/admin/users', icon: <Group /> }, // Add Users tab for teachers
           { label: 'My Decks', path: '/decks', icon: <MenuBook /> },
           { label: 'Assignments', path: '/assignments', icon: <Assignment /> }
         ];
